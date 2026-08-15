@@ -53,18 +53,24 @@ export class Vulcan {
   /**
    * @param {number} dt
    * @param {THREE.Object3D[]} muzzles 총구 위치를 담은 기체 자식 오브젝트들
+   * @param {boolean} firing 사격 가능 여부. 사망 연출·결과 화면에서는 끈다.
    */
-  update(dt, muzzles) {
-    this.cooldown -= dt;
+  update(dt, muzzles, firing = true) {
+    if (!firing) {
+      // 쿨다운이 음수로 깊어지면 사격을 다시 켤 때 한꺼번에 쏟아진다. 그래서 붙잡아 둔다.
+      this.cooldown = VULCAN.FIRE_INTERVAL;
+    } else {
+      this.cooldown -= dt;
 
-    if (this.cooldown <= 0 && muzzles.length > 0) {
-      this.cooldown += VULCAN.FIRE_INTERVAL;
+      if (this.cooldown <= 0 && muzzles.length > 0) {
+        this.cooldown += VULCAN.FIRE_INTERVAL;
 
-      const muzzle = muzzles[this.muzzleIndex % muzzles.length];
-      this.muzzleIndex = (this.muzzleIndex + 1) % muzzles.length;
+        const muzzle = muzzles[this.muzzleIndex % muzzles.length];
+        this.muzzleIndex = (this.muzzleIndex + 1) % muzzles.length;
 
-      const p = muzzle.getWorldPosition(_worldPos);
-      this.#fire(p.x, p.y, p.z);
+        const p = muzzle.getWorldPosition(_worldPos);
+        this.#fire(p.x, p.y, p.z);
+      }
     }
 
     // 탄환 전진
@@ -98,5 +104,12 @@ export class Vulcan {
   recycle(bullet) {
     bullet.life = 0;
     bullet.group.visible = false;
+  }
+
+  /** 날아가던 탄과 총구 화염을 모두 지운다. 상태 전환·재시작 때 쓴다. */
+  reset() {
+    for (const b of this.bullets) this.recycle(b);
+    this.cooldown = VULCAN.FIRE_INTERVAL;
+    this.muzzleFlash.reset();
   }
 }

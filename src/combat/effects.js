@@ -58,6 +58,14 @@ export class FlashPool {
       item.mesh.scale.setScalar(0.25 + t * 0.95);
     }
   }
+
+  /** 화면에 남은 플래시를 모두 지운다. 상태 전환·재시작 때 쓴다. */
+  reset() {
+    for (const item of this.items) {
+      item.time = 0;
+      item.mesh.visible = false;
+    }
+  }
 }
 
 // --- 파괴 파편 버스트 ---
@@ -90,14 +98,21 @@ export class DebrisField {
     this.cursor = 0;
   }
 
-  /** 처치 위치에서 파편을 사방으로 흩뿌린다. */
-  burst(x, y, z) {
-    for (let i = 0; i < DEBRIS.PER_KILL; i++) {
+  /**
+   * 처치 위치에서 파편을 사방으로 흩뿌린다.
+   * @param {number} scale 파편 수와 속도 배수. 큰 적일수록 크게 준다.
+   */
+  burst(x, y, z, scale = 1) {
+    const count = Math.round(DEBRIS.PER_KILL * scale);
+
+    for (let i = 0; i < count; i++) {
       const item = this.items[this.cursor];
       this.cursor = (this.cursor + 1) % this.items.length;
 
       const angle = Math.random() * Math.PI * 2;
-      const speed = DEBRIS.SPEED_MIN + Math.random() * (DEBRIS.SPEED_MAX - DEBRIS.SPEED_MIN);
+      const speed =
+        (DEBRIS.SPEED_MIN + Math.random() * (DEBRIS.SPEED_MAX - DEBRIS.SPEED_MIN)) *
+        Math.sqrt(scale);
 
       item.vx = Math.cos(angle) * speed;
       item.vy = Math.sin(angle) * speed;
@@ -134,6 +149,14 @@ export class DebrisField {
       const t = item.life / item.maxLife;
       item.material.opacity = t;
       item.mesh.scale.setScalar(0.35 + t * 0.85);
+    }
+  }
+
+  /** 날아다니던 파편을 모두 지운다. 상태 전환·재시작 때 쓴다. */
+  reset() {
+    for (const item of this.items) {
+      item.life = 0;
+      item.mesh.visible = false;
     }
   }
 }
@@ -179,11 +202,12 @@ export class ScrapField {
     });
   }
 
-  /** 처치 위치에 조각 두세 개를 떨군다. */
-  drop(x, y, z) {
-    const span = SCRAP.PER_KILL_MAX - SCRAP.PER_KILL_MIN + 1;
-    const count = SCRAP.PER_KILL_MIN + Math.floor(Math.random() * span);
-
+  /**
+   * 처치 위치에 조각을 떨군다.
+   * @param {number} count 떨굴 조각 수
+   * @param {number} spread 시작 위치가 흩어지는 반경. 보스처럼 덩치가 클 때 준다.
+   */
+  drop(x, y, z, count, spread = 0) {
     for (let i = 0; i < count; i++) {
       const item = this.items[this.cursor];
       this.cursor = (this.cursor + 1) % this.items.length;
@@ -195,7 +219,13 @@ export class ScrapField {
       item.spin = (Math.random() - 0.5) * 6;
       item.active = true;
 
-      item.mesh.position.set(x, y, z);
+      if (spread > 0) {
+        const r = Math.sqrt(Math.random()) * spread;
+        const a = Math.random() * Math.PI * 2;
+        item.mesh.position.set(x + Math.cos(a) * r, y + Math.sin(a) * r, z);
+      } else {
+        item.mesh.position.set(x, y, z);
+      }
       item.mesh.rotation.z = Math.random() * Math.PI;
       item.mesh.scale.setScalar(1);
       item.mesh.visible = true;
@@ -248,5 +278,14 @@ export class ScrapField {
     }
 
     this.absorbFlash.update(dt);
+  }
+
+  /** 떠 있는 조각을 흡수 처리 없이 모두 지운다. 상태 전환·재시작 때 쓴다. */
+  reset() {
+    for (const item of this.items) {
+      item.active = false;
+      item.mesh.visible = false;
+    }
+    this.absorbFlash.reset();
   }
 }

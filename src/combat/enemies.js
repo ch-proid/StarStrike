@@ -1,51 +1,82 @@
 import * as THREE from 'three';
 import { createEnemyInterceptor } from '../ships/enemy-interceptor.js';
-import { ENEMY } from './tuning.js';
+import { createEnemyGunship } from '../ships/enemy-gunship.js';
+import { createEnemySaucer } from '../ships/enemy-saucer.js';
+import { ENEMY, ENEMY_TYPES, FIELD } from './tuning.js';
 
-// 더미 적: 화면 위에서 무작위로 내려오는 요격기.
-// 아직 공격도 회피도 하지 않는다. 타격감을 재는 과녁 역할만 한다.
+// 적 편대. 종류별로 오브젝트 풀을 따로 두고, 웨이브가 요청할 때만 한 기씩 내보낸다.
+// 스스로 스폰하지 않는다. 언제 무엇을 낼지는 웨이브 진행이 정한다(game.js).
 //
-// 피격 번쩍임은 재질 스왑으로 만든다. 자식 메시 전부를 흰색으로 바꾸되,
+// 피격 번쩍임은 재질 스왑으로 만든다. 조명을 받는 부품만 흰색으로 바꾸되,
 // 발광 부품(MeshBasicMaterial)은 건드리지 않는다. 가산 블렌딩 평면을 불투명
 // 흰색으로 바꾸면 네모난 흰 판이 그대로 드러나기 때문이다.
 
 const FLASH_COLOR = 0xffffff;
 
-export class DummyEnemies {
+/** 종류 키 → 조형 함수. 기수가 +Y를 보는 기체는 Z축으로 180도 돌려 세운다. */
+const BLUEPRINTS = {
+  INTERCEPTOR: { create: createEnemyInterceptor, faceDown: true },
+  GUNSHIP: { create: createEnemyGunship, faceDown: true },
+  SAUCER: { create: createEnemySaucer, faceDown: false },
+};
+
+export const ENEMY_KEYS = Object.keys(BLUEPRINTS);
+
+export class EnemyField {
   /**
    * @param {THREE.Scene} scene
    * @param {number} halfWidth 화면에 보이는 가로 반폭
    */
   constructor(scene, halfWidth) {
     this.halfWidth = halfWidth;
-    this.spawnTimer = 0;
 
     this.flashMat = new THREE.MeshBasicMaterial({ color: FLASH_COLOR, toneMapped: false });
 
-    this.pool = [];
-    for (let i = 0; i < ENEMY.POOL_SIZE; i++) {
-      const group = createEnemyInterceptor();
-      group.rotation.z = Math.PI; // 기수가 -Y(플레이어 쪽)를 보게 돌린다.
-      group.visible = false;
-      scene.add(group);
+    // 스테이지 난이도 배수. setScaling()으로 갈아 끼운다.
+    this.hpScale = 1;
+    this.speedScale = 1;
 
-      // 번쩍임 대상은 조명을 받는 부품만 추린다.
-      const meshes = [];
-      group.traverse((o) => {
-        if (o.isMesh && o.material.isMeshStandardMaterial) meshes.push(o);
-      });
+    /** @type {Record<string, object[]>} 종류별 풀 */
+    this.pools = {};
 
-      this.pool.push({
-        group,
-        meshes,
-        baseMats: meshes.map((m) => m.material),
-        active: false,
-        hp: 0,
-        speed: 0,
-        flash: 0,
-      });
+    for (const key of ENEMY_KEYS) {
+      const def = ENEMY_TYPES[key];
+      const blueprint = BLUEPRINTS[key];
+      const pool = [];
+
+      for (let i = 0; i < def.POOL_SIZE; i++) {
+        const group = blueprint.create();
+        if (blueprint.faceDown) group.rotation.z = Math.PI; // 기수를 -Y(플레이어 쪽)로
+        group.visible = false;
+        scene.add(group);
+
+        // 번쩍임 대상은 조명을 받는 부품만 추린다.
+        const meshes = [];
+        group.traverse((o) => {
+          if (o.isMesh && o.material.isMeshStandardMaterial) meshes.push(o);
+        });
+
+        pool.push({
+          type: key,
+          def,
+          group,
+          meshes,
+          baseMats: meshes.map((m) => m.material),
+          baseRotationZ: group.rotation.z,
+          active: false,
+          hp: 0,
+          speed: 0,
+          flash: 0,
+          baseX: 0,
+          swayPhase: 0,
+          time: 0,
+        });
+      }
+
+      this.pools[key] = pool;
     }
 
+    /** @type {object[]} 지금 살아 있는 적들 */
     this.active = [];
   }
 
@@ -53,54 +84,70 @@ export class DummyEnemies {
     this.halfWidth = halfWidth;
   }
 
-  update(dt) {
-    this.#updateSpawn(dt);
+  /** 스테이지 난이도 배수를 갈아 끼운다. 이미 떠 있는 적에게는 적용되지 않는다. */
+  setScaling(hpScale, speedScale) {
+    this.hpScale = hpScale;
+    this.speedScale = speedScale;
+  }
 
+  /**
+   * 한 기를 화면 위에 내보낸다. 풀이 비었으면 아무것도 하지 않는다.
+   * @param {string} key ENEMY_KEYS 중 하나
+   * @returns {object|null} 스폰한 개체
+   */
+  spawn(key) {
+    const pool = this.pools[key];
+    if (!pool) return null;
+
+    const e = pool.find((p) => !p.active);
+    if (!e) return null;
+
+    const def = e.def;
+
+    e.active = true;
+    e.hp = Math.round(def.HP * this.hpScale);
+    e.speed =
+      (def.SPEED_MIN + Math.random() * (def.SPEED_MAX - def.SPEED_MIN)) * this.speedScale;
+    e.flash = 0;
+    e.time = 0;
+    e.swayPhase = Math.random() * Math.PI * 2;
+
+    // 흔들리며 내려오는 적은 흔들림 폭만큼 안쪽에서 시작해야 화면을 벗어나지 않는다.
+    const range = Math.max(this.halfWidth * FIELD.SPAWN_X_RATIO - def.SWAY_AMP, 0.5);
+    e.baseX = (Math.random() * 2 - 1) * range;
+
+    e.group.rotation.z = e.baseRotationZ;
+    e.group.position.set(e.baseX, FIELD.SPAWN_Y + Math.random() * FIELD.SPAWN_Y_JITTER, 0);
+    e.group.visible = true;
+
+    this.active.push(e);
+    return e;
+  }
+
+  update(dt) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const e = this.active[i];
+      const def = e.def;
 
+      e.time += dt;
       e.group.position.y -= e.speed * dt;
+
+      // 원반은 좌우로 흔들리며 내려온다.
+      if (def.SWAY_AMP > 0) {
+        e.group.position.x = e.baseX + Math.sin(e.time * def.SWAY_FREQ + e.swayPhase) * def.SWAY_AMP;
+      }
+      if (def.SPIN > 0) {
+        e.group.rotation.z += def.SPIN * dt;
+      }
 
       if (e.flash > 0) {
         e.flash -= dt;
         if (e.flash <= 0) this.#setFlash(e, false);
       }
 
-      if (e.group.position.y < ENEMY.DESPAWN_Y) {
-        this.release(e);
-      }
+      // 방어선을 지나쳐도 남아 있는 적을 거두는 안전망.
+      if (e.group.position.y < FIELD.DESPAWN_Y) this.release(e);
     }
-  }
-
-  #updateSpawn(dt) {
-    this.spawnTimer -= dt;
-    if (this.spawnTimer > 0 || this.active.length >= ENEMY.ALIVE_MAX) return;
-
-    // 개체가 모자라면 간격을 줄여 빠르게 채운다.
-    const rush = this.active.length < ENEMY.ALIVE_MIN;
-    this.spawnTimer = ENEMY.SPAWN_INTERVAL * (rush ? ENEMY.SPAWN_RUSH_SCALE : 1);
-
-    this.#spawn();
-  }
-
-  #spawn() {
-    const e = this.pool.find((p) => !p.active);
-    if (!e) return;
-
-    e.active = true;
-    e.hp = ENEMY.HP;
-    e.speed = ENEMY.SPEED_MIN + Math.random() * (ENEMY.SPEED_MAX - ENEMY.SPEED_MIN);
-    e.flash = 0;
-
-    const range = this.halfWidth * ENEMY.SPAWN_X_RATIO;
-    e.group.position.set(
-      (Math.random() * 2 - 1) * range,
-      ENEMY.SPAWN_Y + Math.random() * ENEMY.SPAWN_Y_JITTER,
-      0
-    );
-    e.group.visible = true;
-
-    this.active.push(e);
   }
 
   /**
@@ -124,6 +171,12 @@ export class DummyEnemies {
 
     const i = this.active.indexOf(enemy);
     if (i >= 0) this.active.splice(i, 1);
+  }
+
+  /** 화면 위의 적을 전부 거둔다. 상태 전환·재시작 때 쓴다. */
+  reset() {
+    for (let i = this.active.length - 1; i >= 0; i--) this.release(this.active[i]);
+    this.active.length = 0;
   }
 
   #setFlash(enemy, on) {

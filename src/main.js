@@ -7,7 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SpaceBackground } from './space-background.js';
 import { Ship } from './ship.js';
 import { CameraFX } from './camera-fx.js';
-import { Sandbox } from './combat/sandbox.js';
+import { Game } from './combat/game.js';
 import { createBossStation } from './ships/boss-station.js';
 
 // --- 씬 / 렌더러 초기화 ---
@@ -90,13 +90,14 @@ const PLAYER_MOVE_LIMIT_RATIO = 0.85; // 화면 가장자리 여백용 계수
 const background = new SpaceBackground(scene, camera);
 const ship = new Ship(scene, visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
 
-// 보스 정거장: 맨 뒤 멀리에 두어 스케일감을 준다. 지금은 배경 장식이다.
-const bossStation = createBossStation();
-bossStation.position.set(0, 12, -26);
-scene.add(bossStation);
+// 배경 장식용 정거장: 맨 뒤 멀리에 두어 스케일감을 준다.
+// 실제로 싸우는 보스는 별도 인스턴스라, 보스전 동안에는 이 장식을 숨긴다(Game이 맡는다).
+const bossDecor = createBossStation();
+bossDecor.position.set(0, 12, -26);
+scene.add(bossDecor);
 
-// 손맛 샌드박스: 발칸 자동 사격 + 더미 적 + 타격 연출
-const sandbox = new Sandbox(scene, ship, cameraFX, visibleHalfWidth);
+// 코어 루프: 웨이브 → 보스 → 스테이지 클리어 / 사망 → 재도전
+const game = new Game(scene, ship, cameraFX, visibleHalfWidth, { bossDecor });
 
 // --- 리사이즈 대응 ---
 
@@ -109,7 +110,7 @@ window.addEventListener('resize', () => {
 
   visibleHalfWidth = getVisibleHalfWidthAtZ0();
   ship.setMoveLimit(visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
-  sandbox.setBounds(visibleHalfWidth);
+  game.setBounds(visibleHalfWidth);
   background.resize(camera);
 });
 
@@ -123,12 +124,12 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1); // 탭 전환 등으로 인한 큰 dt 방지
 
   // 처치 순간의 히트스톱은 게임 시간만 멈춘다. 화면 흔들림은 계속 돌아야 한다.
-  const gameDt = sandbox.gameTime(dt);
+  const gameDt = game.gameTime(dt);
 
   ship.update(gameDt);
-  sandbox.update(gameDt);
+  game.update(gameDt, dt);
 
-  bossStation.rotation.z += 0.06 * gameDt;
+  bossDecor.rotation.z += 0.06 * gameDt;
 
   cameraFX.update(dt);
 

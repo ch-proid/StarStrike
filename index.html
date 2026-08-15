@@ -30,34 +30,363 @@
         display: block;
       }
 
-      /* 스크랩 카운터: 화면 오른쪽 위 구석 */
+      /* --- 공통 --- */
+
+      #hud,
+      #banner,
+      .screen {
+        font-family: system-ui, -apple-system, sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      /* --- 인게임 HUD: 화면 위쪽 --- */
+
       #hud {
         position: fixed;
         top: calc(env(safe-area-inset-top, 0px) + 12px);
+        left: 14px;
         right: 14px;
+        pointer-events: none;
+      }
+
+      #hud-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      #progress {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        color: #cfe6ff;
+        letter-spacing: 0.1em;
+      }
+
+      #stage-label {
+        font-size: 13px;
+        font-weight: 700;
+        opacity: 0.75;
+      }
+
+      #wave-label {
+        font-size: 20px;
+        font-weight: 800;
+        text-shadow: 0 0 10px rgba(90, 180, 255, 0.5);
+      }
+
+      #scrap {
         display: flex;
         align-items: baseline;
         gap: 6px;
         color: #9dff9a;
-        font-family: system-ui, -apple-system, sans-serif;
         font-size: 20px;
         font-weight: 700;
         letter-spacing: 0.06em;
         text-shadow: 0 0 8px rgba(120, 255, 150, 0.5);
-        pointer-events: none;
-        user-select: none;
       }
 
-      #hud .label {
+      #scrap .label {
         font-size: 11px;
         font-weight: 500;
         opacity: 0.65;
+      }
+
+      /* 체력 바 */
+
+      #player-hp {
+        margin-top: 8px;
+        max-width: 240px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .bar {
+        flex: 1;
+        height: 9px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+        overflow: hidden;
+      }
+
+      .bar > i {
+        display: block;
+        height: 100%;
+        width: 100%;
+        border-radius: 5px;
+        transform-origin: left center;
+        transition: transform 0.16s ease-out;
+      }
+
+      #player-hp-fill {
+        background: linear-gradient(90deg, #49b6ff, #7fe9ff);
+        box-shadow: 0 0 10px rgba(80, 190, 255, 0.6);
+      }
+
+      #player-hp.low #player-hp-fill {
+        background: linear-gradient(90deg, #ff4d4d, #ff9a5a);
+        box-shadow: 0 0 10px rgba(255, 90, 90, 0.7);
+      }
+
+      #player-hp-text {
+        color: #cfe6ff;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        opacity: 0.8;
+        min-width: 54px;
+      }
+
+      /* 보스 체력 바: 보스전 동안만 화면 위 가운데 */
+
+      #boss-hp {
+        margin-top: 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+      }
+
+      #boss-hp .name {
+        color: #ffb0b0;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-shadow: 0 0 8px rgba(255, 90, 90, 0.55);
+      }
+
+      /* 세로 배치 안에서는 .bar의 flex:1이 높이를 0으로 눌러 버린다. 그래서 되돌린다. */
+      #boss-hp .bar {
+        flex: 0 0 auto;
+        width: 100%;
+        max-width: 420px;
+        height: 12px;
+        border-radius: 6px;
+      }
+
+      #boss-hp-fill {
+        background: linear-gradient(90deg, #ff2d2d, #ff8a1e);
+        box-shadow: 0 0 14px rgba(255, 70, 40, 0.7);
+        border-radius: 6px;
+      }
+
+      /* --- 배너: 웨이브 시작·보스 경고 --- */
+
+      #banner {
+        position: fixed;
+        top: 34%;
+        left: 0;
+        right: 0;
+        text-align: center;
+        pointer-events: none;
+      }
+
+      #banner-title {
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        color: #eaf6ff;
+        text-shadow: 0 0 18px rgba(90, 180, 255, 0.7);
+      }
+
+      #banner-sub {
+        margin-top: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        color: #9fc4e8;
+      }
+
+      #banner.danger #banner-title {
+        color: #ffdada;
+        text-shadow: 0 0 22px rgba(255, 60, 60, 0.85);
+        animation: pulse 0.5s ease-in-out infinite alternate;
+      }
+
+      #banner.danger #banner-sub {
+        color: #ff9c9c;
+      }
+
+      @keyframes pulse {
+        from {
+          opacity: 0.55;
+          transform: scale(0.97);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1.04);
+        }
+      }
+
+      /* --- 결과 화면(스테이지 클리어 / 사망) --- */
+
+      .screen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(3, 5, 14, 0.78);
+        backdrop-filter: blur(3px);
+      }
+
+      .panel {
+        width: 100%;
+        max-width: 320px;
+        padding: 26px 22px 22px;
+        border-radius: 16px;
+        background: rgba(10, 16, 30, 0.92);
+        box-shadow:
+          inset 0 0 0 1px rgba(120, 190, 255, 0.22),
+          0 18px 50px rgba(0, 0, 0, 0.6);
+        text-align: center;
+      }
+
+      .panel h1 {
+        margin: 0 0 4px;
+        font-size: 26px;
+        font-weight: 900;
+        letter-spacing: 0.1em;
+        color: #eaf6ff;
+        text-shadow: 0 0 16px rgba(90, 180, 255, 0.6);
+      }
+
+      #screen-game-over .panel h1 {
+        color: #ffdada;
+        text-shadow: 0 0 16px rgba(255, 70, 70, 0.6);
+      }
+
+      .panel .tagline {
+        margin: 0 0 18px;
+        font-size: 12px;
+        letter-spacing: 0.16em;
+        color: #7f9bbb;
+      }
+
+      .row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin: 0;
+        padding: 9px 2px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+        color: #a8c2dc;
+      }
+
+      .row b {
+        font-size: 16px;
+        font-weight: 800;
+        color: #eaf6ff;
+        letter-spacing: 0.04em;
+      }
+
+      .row.scrap b {
+        color: #9dff9a;
+      }
+
+      button {
+        display: block;
+        width: 100%;
+        margin-top: 14px;
+        padding: 14px 12px;
+        border: 0;
+        border-radius: 11px;
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        color: #04121f;
+        background: linear-gradient(180deg, #7fe9ff, #35a8e8);
+        box-shadow: 0 8px 22px rgba(40, 150, 220, 0.35);
+        cursor: pointer;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      button.ghost {
+        margin-top: 8px;
+        color: #7f9bbb;
+        background: transparent;
+        box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.2);
+        font-size: 12px;
+        font-weight: 600;
+        padding: 11px;
+      }
+
+      button.ghost[disabled] {
+        opacity: 0.45;
+        cursor: default;
       }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="hud"><span id="scrap-count">0</span><span class="label">SCRAP</span></div>
+
+    <!-- 인게임 HUD -->
+    <div id="hud">
+      <div id="hud-row">
+        <div id="progress">
+          <span id="stage-label">STAGE 1</span>
+          <span id="wave-label">WAVE 1 / 10</span>
+        </div>
+        <div id="scrap"><span id="scrap-count">0</span><span class="label">SCRAP</span></div>
+      </div>
+
+      <div id="player-hp">
+        <div class="bar"><i id="player-hp-fill"></i></div>
+        <span id="player-hp-text">100/100</span>
+      </div>
+
+      <div id="boss-hp" class="hidden">
+        <span class="name">ORBITAL STATION</span>
+        <div class="bar"><i id="boss-hp-fill"></i></div>
+      </div>
+    </div>
+
+    <!-- 웨이브 시작 · 보스 경고 배너 -->
+    <div id="banner" class="hidden">
+      <div id="banner-title"></div>
+      <div id="banner-sub"></div>
+    </div>
+
+    <!-- 스테이지 클리어 -->
+    <div id="screen-stage-clear" class="screen hidden">
+      <div class="panel">
+        <h1>STAGE <span id="clear-stage">1</span> CLEAR</h1>
+        <p class="tagline">방어선을 지켜 냈다</p>
+        <p class="row scrap"><span>이번 스테이지 스크랩</span><b id="clear-scrap">0</b></p>
+        <p class="row"><span>누적 스크랩</span><b id="clear-total">0</b></p>
+        <button id="btn-next-stage">다음 스테이지</button>
+        <!-- 자리만 잡아 둔다. 보상형 광고 연동은 아웃게임 상점과 함께 붙인다. -->
+        <button id="btn-ad-scrap" class="ghost" disabled>스크랩 3배 (광고) · 준비 중</button>
+      </div>
+    </div>
+
+    <!-- 사망 결과 -->
+    <div id="screen-game-over" class="screen hidden">
+      <div class="panel">
+        <h1>기체 격추</h1>
+        <p class="tagline">스크랩을 챙겨 다시 오르자</p>
+        <p class="row"><span>도달</span><b id="over-reach">STAGE 1 · WAVE 1</b></p>
+        <p class="row scrap"><span>이번 판 스크랩</span><b id="over-scrap">0</b></p>
+        <p class="row"><span>누적 스크랩</span><b id="over-total">0</b></p>
+        <p class="row"><span>최고 기록</span><b id="over-best">-</b></p>
+        <button id="btn-retry">다시 도전</button>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
