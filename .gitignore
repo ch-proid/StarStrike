@@ -1,60 +1,13 @@
-# ===== Unity 표준 gitignore =====
+# ===== Node / Vite =====
 
-# 빌드/캐시 폴더
-[Ll]ibrary/
-[Tt]emp/
-[Oo]bj/
-[Bb]uild/
-[Bb]uilds/
-[Ll]ogs/
-[Uu]ser[Ss]ettings/
-[Mm]emoryCaptures/
+node_modules/
+dist/
+.vite/
 
-# Asset 관련 캐시
-[Aa]ssets/AssetStoreTools*
-[Aa]ssets/Plugins/Editor/JetBrains*
-
-# 자동 생성되는 메타/프로젝트 파일
-ExportedObj/
-.consulo/
-*.csproj
-*.unityproj
-*.sln
-*.suo
-*.tmp
-*.user
-*.userprefs
-*.pidb
-*.booproj
-*.svd
-*.pdb
-*.mdb
-*.opendb
-*.VC.db
-
-# 에디터/OS 파일
+# 에디터 파일
 .vs/
 .idea/
-.vscode/
-*.DS_Store
+
+# OS 파일
 Thumbs.db
-
-# Unity3D 생성 메타 파일
-*.pidb.meta
-*.pdb.meta
-*.mdb.meta
-
-# Unity3D generated file on crash reports
-sysinfo.txt
-
-# 패키징/버전관리 관련
-*.apk
-*.aab
-*.unitypackage
-*.app
-
-# 크래시 로그
-crashlytics-build.properties
-
-# 기타 임시 파일
-unity-tmp/
+.DS_Store
