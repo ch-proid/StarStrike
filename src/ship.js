@@ -1,17 +1,31 @@
 import * as THREE from 'three';
+import { createPlayerShip } from './ships/player-ship.js';
 
-// 자리표시용 플레이어 우주선.
+// 플레이어 우주선.
 // 포인터(마우스/터치) x좌표를 따라 좌우로 이동하고, 이동 방향으로 살짝 롤(roll)을 준다.
+// 기수는 +Y(화면 위, 적 방향)를 향한다.
 
-const MOVE_RANGE_X = 8; // 좌우 이동 가능 범위
+const MOVE_RANGE_X = 8; // 좌우 이동 가능 범위 기본값(생성자에 moveLimit 미전달 시 사용)
 const MOVE_SPEED = 10; // 목표 위치로 따라가는 속도
 const MAX_ROLL = 0.35; // 최대 롤 각도(라디안)
 
 export class Ship {
-  constructor(scene) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {number} [moveLimit] 좌우 이동 가능 범위(월드 단위). 화면 비율에 따라 가변.
+   *   생략 시 기본값(MOVE_RANGE_X)을 쓴다. setMoveLimit()으로 이후에도 갱신 가능.
+   */
+  constructor(scene, moveLimit = MOVE_RANGE_X) {
     this.scene = scene;
-    this.mesh = this.#createMesh();
+    this.moveLimit = moveLimit;
+
+    this.mesh = createPlayerShip();
+    this.mesh.position.set(0, -3.8, 0);
     this.scene.add(this.mesh);
+
+    this.thrusters = this.mesh.userData.thrusters ?? [];
+    this.thrusterBase = this.thrusters.map((t) => t.scale.y);
+    this.time = 0;
 
     this.targetX = 0;
     this.pointerX = 0; // -1 ~ 1 정규화된 포인터 위치
@@ -19,28 +33,17 @@ export class Ship {
     this.#bindInput();
   }
 
-  #createMesh() {
-    // 간단한 삼각형(콘) 형태로 우주선을 대신한다.
-    const geometry = new THREE.ConeGeometry(0.6, 1.6, 3);
-    geometry.rotateX(Math.PI / 2); // 콘이 +Y 방향으로 화면 위쪽(전방)을 보도록 눕힌다.
-
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x66ccff,
-      emissive: 0x113355,
-      metalness: 0.3,
-      roughness: 0.4,
-    });
-
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(0, -6, 0);
-    return mesh;
+  /** 화면 리사이즈 등으로 좌우 이동 한계가 바뀌었을 때 호출한다. */
+  setMoveLimit(moveLimit) {
+    this.moveLimit = moveLimit;
+    this.targetX = this.pointerX * this.moveLimit;
   }
 
   #bindInput() {
     const updateFromClientX = (clientX) => {
       const normalized = (clientX / window.innerWidth) * 2 - 1; // -1 ~ 1
       this.pointerX = THREE.MathUtils.clamp(normalized, -1, 1);
-      this.targetX = this.pointerX * MOVE_RANGE_X;
+      this.targetX = this.pointerX * this.moveLimit;
     };
 
     window.addEventListener('mousemove', (e) => updateFromClientX(e.clientX));
@@ -57,6 +60,8 @@ export class Ship {
   }
 
   update(dt) {
+    this.time += dt;
+
     // 목표 x좌표로 부드럽게 이동
     const dx = this.targetX - this.mesh.position.x;
     this.mesh.position.x += dx * Math.min(MOVE_SPEED * dt, 1);
@@ -64,5 +69,11 @@ export class Ship {
     // 이동 속도에 비례해 롤(z축 회전)을 준다.
     const rollTarget = THREE.MathUtils.clamp(-dx * 0.3, -MAX_ROLL, MAX_ROLL);
     this.mesh.rotation.z += (rollTarget - this.mesh.rotation.z) * Math.min(8 * dt, 1);
+
+    // 엔진 분사 글로우가 미세하게 흔들리도록 길이를 떨어준다.
+    const flicker = 0.88 + Math.sin(this.time * 26) * 0.06 + Math.random() * 0.06;
+    for (let i = 0; i < this.thrusters.length; i++) {
+      this.thrusters[i].scale.y = this.thrusterBase[i] * flicker;
+    }
   }
 }
