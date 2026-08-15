@@ -4,12 +4,10 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { Starfield } from './starfield.js';
+import { SpaceBackground } from './space-background.js';
 import { Ship } from './ship.js';
 import { CameraFX } from './camera-fx.js';
-import { createEnemyInterceptor } from './ships/enemy-interceptor.js';
-import { createEnemyGunship } from './ships/enemy-gunship.js';
-import { createEnemySaucer } from './ships/enemy-saucer.js';
+import { Sandbox } from './combat/sandbox.js';
 import { createBossStation } from './ships/boss-station.js';
 
 // --- 씬 / 렌더러 초기화 ---
@@ -89,74 +87,16 @@ scene.add(rimLight);
 
 const PLAYER_MOVE_LIMIT_RATIO = 0.85; // 화면 가장자리 여백용 계수
 
-const starfield = new Starfield(scene);
+const background = new SpaceBackground(scene, camera);
 const ship = new Ship(scene, visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
 
-// --- 시각 검수용 적 배치 ---
-// 전투 로직은 아직 없다. 위에서 아래로 천천히 흘러내리다 위로 되돌아간다.
-
-const DRIFT_TOP = 13;
-const DRIFT_BOTTOM = -12;
-
-const drifters = [];
-
-/** 적기를 씬에 올린다. 기수가 -Y(플레이어 쪽)를 보도록 Z축으로 180도 돌린다. */
-function addEnemy(group, { x, y, z = 0, speed = 1.6, spin = 0, faceDown = true }) {
-  if (faceDown) group.rotation.z = Math.PI;
-  group.position.set(x, y, z);
-  scene.add(group);
-  drifters.push({ group, speed, spin, baseZ: z });
-  return group;
-}
-
-// 전시 배치 x좌표는 고정값 대신 화면에 보이는 반폭(visibleHalfWidth)에 대한 비율로 잡아,
-// 세로로 좁은 모바일 화면에서도 화면 밖으로 나가지 않게 한다.
-const SQUAD_CENTER_RATIO = -0.6;
-const GUNSHIP_X_RATIO = 0;
-const SAUCER_X_RATIO = 0.6;
-
-// 인터셉터 5기 편대(V자 대형) — 다수 생성 성능 확인용. 대형 내 좌우 벌어짐도
-// 반폭에 대한 비율로 잡아 편대 중심 대비 원래와 같은 비례를 유지한다.
-const SQUAD_OFFSETS = [
-  [0, 0],
-  [-0.144, -1.1],
-  [0.144, -1.1],
-  [-0.289, -2.2],
-  [0.289, -2.2],
-];
-const squadCenterX = visibleHalfWidth * SQUAD_CENTER_RATIO;
-for (const [oxRatio, oy] of SQUAD_OFFSETS) {
-  addEnemy(createEnemyInterceptor(), {
-    x: squadCenterX + visibleHalfWidth * oxRatio,
-    y: DRIFT_TOP + oy,
-    speed: 2.4,
-  });
-}
-
-// 중형 건쉽
-addEnemy(createEnemyGunship(), { x: visibleHalfWidth * GUNSHIP_X_RATIO, y: 6.5, speed: 1.5 });
-
-// 회전하며 내려오는 원반
-addEnemy(createEnemySaucer(), {
-  x: visibleHalfWidth * SAUCER_X_RATIO,
-  y: 1.5,
-  speed: 1.2,
-  spin: 0.7,
-});
-
-// 보스 정거장: 맨 뒤 멀리에 두어 스케일감을 준다. 제자리에서 천천히 자전.
+// 보스 정거장: 맨 뒤 멀리에 두어 스케일감을 준다. 지금은 배경 장식이다.
 const bossStation = createBossStation();
 bossStation.position.set(0, 12, -26);
 scene.add(bossStation);
 
-// --- 스페이스바로 카메라 흔들림 시연 ---
-
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') {
-    e.preventDefault();
-    cameraFX.shake(0.5, 0.35);
-  }
-});
+// 손맛 샌드박스: 발칸 자동 사격 + 더미 적 + 타격 연출
+const sandbox = new Sandbox(scene, ship, cameraFX, visibleHalfWidth);
 
 // --- 리사이즈 대응 ---
 
@@ -169,6 +109,8 @@ window.addEventListener('resize', () => {
 
   visibleHalfWidth = getVisibleHalfWidthAtZ0();
   ship.setMoveLimit(visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
+  sandbox.setBounds(visibleHalfWidth);
+  background.resize(camera);
 });
 
 // --- 게임 루프 ---
@@ -180,18 +122,13 @@ function animate() {
 
   const dt = Math.min(clock.getDelta(), 0.1); // 탭 전환 등으로 인한 큰 dt 방지
 
-  starfield.update(dt);
-  ship.update(dt);
+  // 처치 순간의 히트스톱은 게임 시간만 멈춘다. 화면 흔들림은 계속 돌아야 한다.
+  const gameDt = sandbox.gameTime(dt);
 
-  for (const d of drifters) {
-    d.group.position.y -= d.speed * dt;
-    if (d.spin) d.group.rotation.z += d.spin * dt;
-    if (d.group.position.y < DRIFT_BOTTOM) {
-      d.group.position.y += DRIFT_TOP - DRIFT_BOTTOM;
-    }
-  }
+  ship.update(gameDt);
+  sandbox.update(gameDt);
 
-  bossStation.rotation.z += 0.06 * dt;
+  bossStation.rotation.z += 0.06 * gameDt;
 
   cameraFX.update(dt);
 

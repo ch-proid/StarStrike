@@ -9,6 +9,13 @@ const MOVE_RANGE_X = 8; // 좌우 이동 가능 범위 기본값(생성자에 mo
 const MOVE_SPEED = 10; // 목표 위치로 따라가는 속도
 const MAX_ROLL = 0.35; // 최대 롤 각도(라디안)
 
+// 발칸 총구 자리(기체 로컬 좌표). 기수 양옆 캐너드 끝에 하나씩.
+// 빈 오브젝트로 달아 두면 기체가 롤할 때 총구도 함께 기울어진다.
+const MUZZLE_LOCAL = [
+  [1.0, 1.95, 0.2],
+  [-1.0, 1.95, 0.2],
+];
+
 export class Ship {
   /**
    * @param {THREE.Scene} scene
@@ -22,6 +29,13 @@ export class Ship {
     this.mesh = createPlayerShip();
     this.mesh.position.set(0, -3.8, 0);
     this.scene.add(this.mesh);
+
+    this.muzzles = MUZZLE_LOCAL.map(([x, y, z]) => {
+      const anchor = new THREE.Object3D();
+      anchor.position.set(x, y, z);
+      this.mesh.add(anchor);
+      return anchor;
+    });
 
     this.thrusters = this.mesh.userData.thrusters ?? [];
     this.thrusterBase = this.thrusters.map((t) => t.scale.y);
