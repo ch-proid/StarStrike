@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { Vulcan } from './vulcan.js';
 import { EnemyField } from './enemies.js';
 import { Boss } from './boss.js';
+import { DefenseLine } from './defense-line.js';
 import { DebrisField, FlashPool, ScrapField } from './effects.js';
 import { MergeBoard } from './board.js';
 import { HUD } from './ui.js';
 import { buildWave, stageScales } from './waves.js';
-import { BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from './tuning.js';
+import { AIM, BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from './tuning.js';
 
 // 코어 루프.
 //
@@ -15,6 +16,10 @@ import { BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from './t
 //
 // 압박의 축은 방어선이다. 적을 못 잡으면 화면 아래를 통과하며 체력을 깎고,
 // 보스는 방어선에 닿는 순간 기체를 깔아뭉갠다. 그래서 보스전은 체력전이 아니라 시간전이다.
+//
+// 조준도 이 파일이 맡는다. 플레이어는 전장을 만지지 않는다.
+// 표적을 고르고(방어선에 가장 가까운 적이 먼저다) 기체를 그 밑으로 보내는 일까지가 여기다.
+// 손은 머지 보드에만 둔다.
 //
 // 화력의 축은 머지 보드다(board.js). 보드가 정한 총 공격력을 발칸이 그대로 받아 쏜다.
 // 스크랩은 두 갈래로 센다. 지갑(wallet)은 무기를 사고 남은 돈이고,
@@ -62,17 +67,18 @@ export class Game {
    * @param {import('../ship.js').Ship} ship
    * @param {import('../camera-fx.js').CameraFX} cameraFX
    * @param {number} halfWidth 화면에 보이는 가로 반폭
-   * @param {{bossDecor?: THREE.Object3D}} [opts] bossDecor: 배경 장식용 정거장.
-   *   보스전 동안에는 숨겨서 같은 기체가 둘로 보이지 않게 한다.
+   * @param {{project?: (x: number, y: number) => {x: number, y: number}}} [opts]
+   *   project: 전장 좌표를 폰 프레임 안의 px로 옮기는 함수. 뜨는 피해 숫자에 쓴다.
    */
-  constructor(scene, ship, cameraFX, halfWidth, { bossDecor = null } = {}) {
+  constructor(scene, ship, cameraFX, halfWidth, { project = null } = {}) {
     this.ship = ship;
     this.cameraFX = cameraFX;
-    this.bossDecor = bossDecor;
+    this.project = project;
 
     this.vulcan = new Vulcan(scene);
     this.enemies = new EnemyField(scene, halfWidth);
     this.boss = new Boss(scene);
+    this.defenseLine = new DefenseLine(scene, halfWidth);
     this.debris = new DebrisField(scene);
     this.scrap = new ScrapField(scene, () => this.#collectScrap());
 
@@ -113,6 +119,9 @@ export class Game {
 
     this.diedDuringBoss = false; // 결과 화면에 "BOSS"로 적을지 웨이브 번호로 적을지
 
+    /** @type {object|null} 지금 겨누고 있는 적. 자주 바뀌면 기체가 갈팡질팡한다. */
+    this.aimTarget = null;
+
     // 보스 폭발 연출용
     this.bossDeathPoint = new THREE.Vector3();
     this.burstTimer = 0;
@@ -134,6 +143,7 @@ export class Game {
 
   setBounds(halfWidth) {
     this.enemies.setBounds(halfWidth);
+    this.defenseLine.setBounds(halfWidth);
   }
 
   /**
@@ -160,10 +170,13 @@ export class Game {
 
     if (combat) {
       this.enemies.update(dt);
+      this.#updateAim();
       this.#resolveBullets(dt);
       this.#resolveBreach();
       this.#resolveCollisions();
     }
+
+    this.defenseLine.update(dt);
 
     // 보스는 늘 돌린다. 터진 뒤에도 피격 불꽃이 마저 사그라들어야 하기 때문이다.
     this.boss.update(dt);
@@ -200,6 +213,71 @@ export class Game {
     if (collecting) this.scrap.update(dt, this.ship.mesh.position);
   }
 
+  // --- 자동 조준 -----------------------------------------------------------
+
+  /**
+   * 표적을 고르고 기체를 그 밑으로 보낸다.
+   *
+   * 고르는 기준은 하나다. 방어선에 가장 가까운 적, 곧 가장 아래에 있는 적이다.
+   * 놓치면 곧바로 아프기 때문이다. 그 높이가 비슷한 적이 여럿이면 가까운 쪽을 잡는다.
+   * 표적이 매 프레임 바뀌면 기체가 제자리에서 떨리므로, 지금 표적보다
+   * AIM.SWITCH_MARGIN만큼 더 급한 적이 나타났을 때만 갈아탄다.
+   */
+  #updateAim() {
+    if (this.ship.destroyed) return;
+
+    // 보스가 떠 있으면 화면 위를 통째로 막고 있다. 다른 표적을 볼 이유가 없다.
+    if (this.boss.alive) {
+      this.aimTarget = null;
+      this.ship.setAim(this.boss.position.x);
+      return;
+    }
+
+    const shipX = this.ship.mesh.position.x;
+    const current = this.aimTarget?.active ? this.aimTarget : null;
+
+    // 1) 가장 아래에 있는 적의 높이를 찾는다.
+    let lowestY = Infinity;
+    for (const e of this.enemies.active) {
+      if (e.group.position.y < lowestY) lowestY = e.group.position.y;
+    }
+
+    // 2) 그 높이 언저리(SAME_ROW) 안에서 기체와 가장 가까운 적을 잡는다.
+    const SAME_ROW = 1.2;
+    let best = null;
+    let bestDx = Infinity;
+
+    for (const e of this.enemies.active) {
+      if (e.group.position.y > lowestY + SAME_ROW) continue;
+
+      const dx = Math.abs(e.group.position.x - shipX);
+      if (dx < bestDx) {
+        bestDx = dx;
+        best = e;
+      }
+    }
+
+    if (!best) {
+      // 표적이 없으면 가운데로 돌아가 다음 웨이브를 기다린다.
+      this.aimTarget = null;
+      this.ship.setAim(0);
+      return;
+    }
+
+    if (current && current !== best && current.group.position.y <= best.group.position.y + AIM.SWITCH_MARGIN) {
+      best = current; // 지금 표적이 아직 충분히 급하다. 그대로 간다.
+    }
+
+    this.aimTarget = best;
+
+    // 흔들리며 내려오는 적은 앞질러 겨눈다. 탄이 닿을 때쯤의 자리를 본다.
+    const muzzleY = this.ship.mesh.position.y + 1.95;
+    const travel = Math.max(best.group.position.y - muzzleY, 0);
+    const lead = Math.min(travel / VULCAN.BULLET_SPEED, AIM.LEAD_TIME_MAX);
+
+    this.ship.setAim(best.group.position.x + best.vx * lead);
+  }
+
   // --- 판 진행 -------------------------------------------------------------
 
   /** 새 판을 시작한다. 첫 실행과 [다시 도전] 버튼이 함께 쓴다. */
@@ -231,7 +309,6 @@ export class Game {
     this.scrapScale = scales.scrap;
 
     this.hud.setStage(this.stage);
-    this.#showBossDecor(true);
     this.#startNextWave();
   }
 
@@ -243,8 +320,8 @@ export class Game {
     this.spawnInterval = plan.spawnInterval;
     this.spawnTimer = 0;
 
-    this.hud.setWave(this.wave, STAGE.WAVES_PER_STAGE);
-    this.hud.banner(`WAVE ${this.wave}`, `STAGE ${this.stage}`, WAVE.INTRO_TIME);
+    this.hud.setWave(this.wave);
+    this.hud.banner(`WAVE ${this.wave}`, '', WAVE.INTRO_TIME);
 
     this.#setState(STATE.WAVE);
   }
@@ -274,8 +351,7 @@ export class Game {
 
   #startBossWarning() {
     this.hud.setWaveBoss();
-    this.hud.banner('WARNING', '거대 정거장 접근', BOSS.WARNING_TIME, true);
-    this.#showBossDecor(false);
+    this.hud.banner('WARNING', '정거장 접근', BOSS.WARNING_TIME, true);
     this.cameraFX.shake(0.18, BOSS.WARNING_TIME);
     this.#setState(STATE.BOSS_WARNING);
   }
@@ -289,8 +365,13 @@ export class Game {
 
   /** 보스전 동안 방어선과 체력 바를 지켜본다. */
   #watchBoss() {
-    // 방어선을 밟히면 기체가 깔린다. 이것이 타임어택의 압박이다.
+    // 보스가 내려온 만큼 방어선이 미리 붉어진다. 같은 선이 같은 위험을 말한다.
+    const span = BOSS.SPAWN_Y - BOSS.KILL_LINE_Y;
+    this.defenseLine.setThreat((BOSS.SPAWN_Y - this.boss.position.y) / span);
+
+    // 즉사선을 밟히면 기체가 깔린다. 이것이 타임어택의 압박이다.
     if (this.boss.reachedLine()) {
+      this.defenseLine.hit(this.boss.position.x);
       this.#killPlayer();
       return;
     }
@@ -314,6 +395,7 @@ export class Game {
     );
 
     this.boss.despawn();
+    this.defenseLine.setThreat(0);
     this.hud.showBossHp(false);
 
     this.burstsLeft = BOSS.DEATH_BURSTS;
@@ -476,19 +558,23 @@ export class Game {
   /** 방어선 통과: 놓친 적이 아래로 빠져나가며 체력을 깎는다. */
   #resolveBreach() {
     let damage = 0;
+    let breachX = 0;
 
     for (let i = this.enemies.active.length - 1; i >= 0; i--) {
       const e = this.enemies.active[i];
       if (e.group.position.y > FIELD.DEFENSE_LINE_Y) continue;
 
       damage += e.def.BREACH_DAMAGE;
+      breachX = e.group.position.x;
       this.debris.burst(e.group.position.x, e.group.position.y, 0, 0.6);
+      // 선이 그 자리에서 붉게 출렁인다. 어디가 뚫렸는지 눈으로 보여 준다.
+      this.defenseLine.hit(breachX);
       this.enemies.release(e);
     }
 
     // 같은 프레임에 여러 기가 통과하면 한 번에 몰아 맞는다.
     // 무적 시간으로 막지 않는다. 못 잡으면 아프다는 것이 이 게임의 압박이다.
-    if (damage > 0) this.#hurtPlayer(damage, false);
+    if (damage > 0) this.#hurtPlayer(damage, false, breachX, FIELD.DEFENSE_LINE_Y);
   }
 
   /** 기체 충돌: 부딪힌 적은 부서지고, 플레이어는 짧은 무적을 얻는다. */
@@ -507,8 +593,10 @@ export class Game {
 
       this.debris.burst(e.group.position.x, e.group.position.y, 0, 0.8);
       const damage = e.def.CRASH_DAMAGE;
+      const hitX = e.group.position.x;
+      const hitY = e.group.position.y;
       this.enemies.release(e);
-      this.#hurtPlayer(damage, true);
+      this.#hurtPlayer(damage, true, hitX, hitY);
       return; // 한 프레임에 한 번만 부딪힌다.
     }
   }
@@ -516,12 +604,19 @@ export class Game {
   /**
    * @param {number} amount 깎을 체력
    * @param {boolean} grantInvuln 무적 시간을 줄지. 충돌은 주고, 방어선 통과는 주지 않는다.
+   * @param {number} x 맞은 자리(전장 좌표). 뜨는 숫자를 여기에 띄운다.
+   * @param {number} y
    */
-  #hurtPlayer(amount, grantInvuln) {
+  #hurtPlayer(amount, grantInvuln, x = 0, y = FIELD.DEFENSE_LINE_Y) {
     if (this.ship.destroyed) return;
 
     this.playerHp -= amount;
     this.hud.setHp(Math.max(this.playerHp, 0), PLAYER.MAX_HP);
+
+    // 얼마나 왜 아팠는지 눈으로 알려 준다. 붉은 비네트가 번쩍이고 숫자가 떠오른다.
+    this.hud.hurtFlash();
+    const p = this.project?.(x, y);
+    if (p) this.hud.damage(p.x, p.y, amount);
 
     if (this.playerHp <= 0) {
       this.#killPlayer();
@@ -620,15 +715,13 @@ export class Game {
     this.scrap.reset();
     this.powerBurst.reset();
     this.boss.despawn();
+    this.defenseLine.reset();
 
     this.hitStop = 0;
     this.waveQueue.length = 0;
+    this.aimTarget = null;
 
     this.hud.hideBanner();
     this.hud.showBossHp(false);
-  }
-
-  #showBossDecor(visible) {
-    if (this.bossDecor) this.bossDecor.visible = visible;
   }
 }

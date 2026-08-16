@@ -246,24 +246,25 @@ export class ScrapField {
         item.vx *= drag;
         item.vy *= drag;
       } else {
-        // 2단계: 기체 쪽으로 가속하며 빨려 들어간다.
+        // 2단계: 기체 쪽으로 곧장 날아온다. 반경 제한은 없다. 어디서 떨어졌든 전부 온다.
+        //
+        // 가속만 더하면 처음 흩어질 때의 접선 속도가 남아 조각이 기체 둘레를 맴돈다.
+        // 그래서 가속이 아니라 "가고 싶은 속도"로 방향째 끌어당긴다. 그러면 반드시 수렴한다.
         const dx = target.x - item.mesh.position.x;
         const dy = target.y - item.mesh.position.y;
         const dist = Math.hypot(dx, dy) || 1;
 
-        item.vx += (dx / dist) * SCRAP.MAGNET_ACCEL * dt;
-        item.vy += (dy / dist) * SCRAP.MAGNET_ACCEL * dt;
-
-        const speed = Math.hypot(item.vx, item.vy);
-        if (speed > SCRAP.MAGNET_MAX_SPEED) {
-          const k = SCRAP.MAGNET_MAX_SPEED / speed;
-          item.vx *= k;
-          item.vy *= k;
-        }
+        const want = Math.min(
+          SCRAP.MAGNET_SPEED + dist * SCRAP.MAGNET_SPEED_GAIN,
+          SCRAP.MAGNET_MAX_SPEED
+        );
+        const turn = Math.min(SCRAP.MAGNET_TURN * dt, 1);
+        item.vx += ((dx / dist) * want - item.vx) * turn;
+        item.vy += ((dy / dist) * want - item.vy) * turn;
 
         // 이번 프레임에 지나쳐 버릴 거리까지 흡수 범위로 쳐서, 느린 기기에서
         // 조각이 기체를 스쳐 지나 맴도는 일을 막는다.
-        const step = Math.min(speed, SCRAP.MAGNET_MAX_SPEED) * dt;
+        const step = Math.hypot(item.vx, item.vy) * dt;
         if (dist < SCRAP.PICKUP_RADIUS + step) {
           item.active = false;
           item.mesh.visible = false;

@@ -1,19 +1,20 @@
 import * as THREE from 'three';
 import { createPlayerShip } from './ships/player-ship.js';
-import { boardInput } from './combat/board.js';
-import { PLAYER } from './combat/tuning.js';
+import { AIM, PLAYER } from './combat/tuning.js';
 
 // 플레이어 우주선.
-// 포인터(마우스/터치) x좌표를 따라 좌우로 이동하고, 이동 방향으로 살짝 롤(roll)을 준다.
+//
+// 조종하지 않는다. 손은 머지 보드에만 둔다.
+// 표적은 게임 진행(combat/game.js)이 골라 setAim()으로 넘겨주고,
+// 기체는 그 x좌표로 부드럽게 따라가며 이동 방향으로 살짝 롤(roll)을 준다.
+// 탄은 늘 위로 나가므로, 표적 밑에 서는 것만으로 명중한다.
 // 기수는 +Y(화면 위, 적 방향)를 향한다.
 //
-// 체력과 사망 판정은 게임 진행(combat/game.js)이 들고, 여기서는 그 결과를 눈에 보이게만 한다.
+// 체력과 사망 판정도 게임 진행이 들고, 여기서는 그 결과를 눈에 보이게만 한다.
 // 피격하면 잠깐 붉게 물들고, 무적 시간 동안 깜빡인다.
 // 합성으로 주포가 세지면 푸르게 번쩍이며 살짝 부푼다.
 
 const MOVE_RANGE_X = 8; // 좌우 이동 가능 범위 기본값(생성자에 moveLimit 미전달 시 사용)
-const MOVE_SPEED = 10; // 목표 위치로 따라가는 속도
-const MAX_ROLL = 0.35; // 최대 롤 각도(라디안)
 
 // 발칸 총구 자리(기체 로컬 좌표). 기수 양옆 캐너드 끝에 하나씩.
 // 빈 오브젝트로 달아 두면 기체가 롤할 때 총구도 함께 기울어진다.
@@ -47,8 +48,7 @@ export class Ship {
     this.thrusterBase = this.thrusters.map((t) => t.scale.y);
     this.time = 0;
 
-    this.targetX = 0;
-    this.pointerX = 0; // -1 ~ 1 정규화된 포인터 위치
+    this.targetX = 0; // 자동 조준이 정해 준 목표 x. setAim()이 갈아 끼운다.
 
     this.homeY = this.mesh.position.y;
 
@@ -72,8 +72,14 @@ export class Ship {
     this.powerFlash = 0;
     this.invuln = 0;
     this.destroyed = false;
+  }
 
-    this.#bindInput();
+  /**
+   * 자동 조준이 정한 목표 x좌표. 매 프레임 game.js가 불러 준다.
+   * 화면 밖으로 나가지 않도록 이동 한계 안으로 접어 넣는다.
+   */
+  setAim(x) {
+    this.targetX = THREE.MathUtils.clamp(x, -this.moveLimit, this.moveLimit);
   }
 
   /**
@@ -121,41 +127,13 @@ export class Ship {
     this.mesh.scale.setScalar(this.baseScale);
     this.mesh.visible = true;
 
-    this.targetX = this.pointerX * this.moveLimit;
+    this.targetX = 0;
   }
 
   /** 화면 리사이즈 등으로 좌우 이동 한계가 바뀌었을 때 호출한다. */
   setMoveLimit(moveLimit) {
     this.moveLimit = moveLimit;
-    this.targetX = this.pointerX * this.moveLimit;
-  }
-
-  #bindInput() {
-    const updateFromClientX = (clientX) => {
-      const normalized = (clientX / window.innerWidth) * 2 - 1; // -1 ~ 1
-      this.pointerX = THREE.MathUtils.clamp(normalized, -1, 1);
-      this.targetX = this.pointerX * this.moveLimit;
-    };
-
-    // 머지 보드 위의 손짓은 조종이 아니다. 보드에서 시작된 입력과
-    // 무기를 끌고 있는 동안의 움직임은 흘려보낸다.
-    const forBoard = (e) =>
-      boardInput.dragging ||
-      (e.target instanceof Element && e.target.closest('#board') !== null);
-
-    window.addEventListener('mousemove', (e) => {
-      if (forBoard(e)) return;
-      updateFromClientX(e.clientX);
-    });
-
-    window.addEventListener(
-      'touchmove',
-      (e) => {
-        if (forBoard(e) || e.touches.length === 0) return;
-        updateFromClientX(e.touches[0].clientX);
-      },
-      { passive: true }
-    );
+    this.setAim(this.targetX);
   }
 
   update(dt) {
@@ -166,10 +144,12 @@ export class Ship {
 
     // 목표 x좌표로 부드럽게 이동
     const dx = this.targetX - this.mesh.position.x;
-    this.mesh.position.x += dx * Math.min(MOVE_SPEED * dt, 1);
+    if (Math.abs(dx) > AIM.DEAD_ZONE) {
+      this.mesh.position.x += dx * Math.min(AIM.MOVE_SPEED * dt, 1);
+    }
 
-    // 이동 속도에 비례해 롤(z축 회전)을 준다.
-    const rollTarget = THREE.MathUtils.clamp(-dx * 0.3, -MAX_ROLL, MAX_ROLL);
+    // 이동 속도에 비례해 롤(z축 회전)을 준다. 표적을 좇는 몸짓이 여기서 나온다.
+    const rollTarget = THREE.MathUtils.clamp(-dx * AIM.ROLL_GAIN, -AIM.MAX_ROLL, AIM.MAX_ROLL);
     this.mesh.rotation.z += (rollTarget - this.mesh.rotation.z) * Math.min(8 * dt, 1);
 
     // 엔진 분사 글로우가 미세하게 흔들리도록 길이를 떨어준다.

@@ -9,13 +9,12 @@ import { BOARD, WEAPON } from './tuning.js';
 //
 // 이 파일은 데이터(칸에 무엇이 있는가)와 조작(끌어다 놓기)과 표시를 한꺼번에 맡는다.
 // 대신 재화는 건드리지 않는다. 스크랩 지갑은 game.js가 들고, 여기서는 물어보고 시킬 뿐이다.
-
-/**
- * 무기를 끌고 있는 동안은 기체 조종을 멈춰야 한다.
- * 보드 밖까지 끌고 나가면 손가락이 화면 위쪽으로 올라가는데,
- * 그때마다 기체가 따라 움직이면 조작이 엉킨다. ship.js가 이 값을 본다.
- */
-export const boardInput = { dragging: false };
+//
+// 보이는 규칙
+//   칸에는 숫자가 아니라 발칸 실루엣이 놓인다. 무기 칸이 무기로 보여야 하기 때문이다.
+//   레벨 구간이 오를수록 총열이 늘고 몸집이 커지고 색이 옮겨 간다. 레벨 숫자는 구석의 작은 배지다.
+//   지금 나가고 있는 주포만 테두리가 은은히 빛난다.
+//   무기를 집어 들면 합성되는 칸들이 함께 빛나, 어디에 놓으면 되는지 말없이 알려 준다.
 
 /** 레벨 하나의 공격력. 레벨이 오를수록 기하급수로 커진다. */
 export function weaponPower(level) {
@@ -27,9 +26,39 @@ export function refundOf(level) {
   return Math.round(WEAPON.REFUND_BASE * Math.pow(WEAPON.REFUND_PER_LEVEL, level - 1));
 }
 
-/** 레벨대(1~3, 4~6, 7~9, 10~)마다 타일 위 표식이 한 겹씩 늘어난다. */
-function markOf(level) {
-  return '▲'.repeat(Math.min(Math.ceil(level / 3), 4));
+/** 레벨 구간(1~3, 4~6, 7~9, 10~). 실루엣의 총열 수와 크기를 정한다. */
+function tierOf(level) {
+  return Math.min(Math.ceil(level / 3), 4);
+}
+
+/** 몸통과 손잡이. 어떤 구간에서나 같다. */
+const BODY = '<path d="M6.2 13.2h11.6l1.5 5.1a1.5 1.5 0 0 1-1.44 1.92H6.14A1.5 1.5 0 0 1 4.7 18.3z"/>';
+
+/** 구간별 총열 묶음. 1총열 → 2총열 → 3총열 → 3총열 + 측면 날개. */
+const BARRELS = [
+  '<rect x="10.5" y="3" width="3" height="11" rx="1.2"/>' +
+    '<rect x="8.4" y="4.6" width="7.2" height="1.7" rx=".85"/>',
+
+  '<rect x="8.9" y="3.4" width="2.4" height="10.6" rx="1"/>' +
+    '<rect x="12.7" y="3.4" width="2.4" height="10.6" rx="1"/>' +
+    '<rect x="7.6" y="5" width="8.8" height="1.7" rx=".85"/>',
+
+  '<rect x="7.3" y="4" width="2.2" height="10" rx="1"/>' +
+    '<rect x="10.9" y="2.8" width="2.2" height="11.2" rx="1"/>' +
+    '<rect x="14.5" y="4" width="2.2" height="10" rx="1"/>' +
+    '<rect x="6.6" y="5.6" width="10.8" height="1.7" rx=".85"/>',
+
+  '<rect x="7.3" y="4" width="2.2" height="10" rx="1"/>' +
+    '<rect x="10.9" y="2.2" width="2.2" height="11.8" rx="1"/>' +
+    '<rect x="14.5" y="4" width="2.2" height="10" rx="1"/>' +
+    '<rect x="6.6" y="5.6" width="10.8" height="1.7" rx=".85"/>' +
+    '<path d="M4.9 12.6 1.8 15.4v3.1l3.4-2.4z"/>' +
+    '<path d="M19.1 12.6l3.1 2.8v3.1l-3.4-2.4z"/>',
+];
+
+/** 발칸 실루엣 한 벌. 외부 이미지 없이 인라인 SVG로만 그린다. */
+function weaponSvg(level) {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${BARRELS[tierOf(level) - 1]}${BODY}</svg>`;
 }
 
 function contains(rect, x, y) {
@@ -57,16 +86,12 @@ export class MergeBoard {
     this.slots = new Array(this.size).fill(0);
     this.purchases = 0; // 이번 판에 산 횟수. 가격이 여기에 매여 있다.
 
-    this.root = document.getElementById('board');
     this.grid = document.getElementById('board-grid');
     this.trash = document.getElementById('board-trash');
     this.buyBtn = document.getElementById('btn-buy');
     this.el = {
-      main: document.getElementById('board-main'),
-      note: document.getElementById('board-note'),
-      power: document.getElementById('board-power'),
-      support: document.getElementById('board-support'),
       cost: document.getElementById('buy-cost'),
+      refund: document.getElementById('trash-refund'),
     };
 
     this.cells = [];
@@ -98,16 +123,18 @@ export class MergeBoard {
 
   /**
    * 보드 전체를 훑어 주포와 보조 화력을 계산한다.
-   * @returns {{mainLevel: number, mainPower: number, support: number,
+   * @returns {{mainLevel: number, mainSlot: number, mainPower: number, support: number,
    *            power: number, count: number, full: boolean}}
    */
   stats() {
     let mainLevel = 0;
+    let mainSlot = -1;
     let mainPower = 0;
     let sum = 0;
     let count = 0;
 
-    for (const level of this.slots) {
+    for (let i = 0; i < this.size; i++) {
+      const level = this.slots[i];
       if (level <= 0) continue;
 
       count += 1;
@@ -117,6 +144,7 @@ export class MergeBoard {
       // 같은 최고 레벨이 둘이면 하나만 주포다. 나머지는 보조로 센다.
       if (level > mainLevel) {
         mainLevel = level;
+        mainSlot = i;
         mainPower = p;
       }
     }
@@ -124,7 +152,7 @@ export class MergeBoard {
     const support = Math.max(sum - mainPower, 0) * WEAPON.SUPPORT_RATIO;
     const power = Math.max(mainPower + support, WEAPON.MIN_POWER);
 
-    return { mainLevel, mainPower, support, power, count, full: count >= this.size };
+    return { mainLevel, mainSlot, mainPower, support, power, count, full: count >= this.size };
   }
 
   get power() {
@@ -181,6 +209,8 @@ export class MergeBoard {
 
   /** 칸마다 무기 타일을 만들거나 지우거나 레벨만 갈아 끼운다. */
   #render() {
+    const mainSlot = this.stats().mainSlot;
+
     for (let i = 0; i < this.size; i++) {
       const cell = this.cells[i];
       const level = this.slots[i];
@@ -194,19 +224,22 @@ export class MergeBoard {
       if (!tile) {
         tile = document.createElement('div');
         tile.className = 'wpn';
-        tile.innerHTML = '<span class="mark"></span><span class="lv"></span>';
         cell.appendChild(tile);
       }
 
       this.#paint(tile, level);
+      // 지금 나가고 있는 주포만 테두리가 빛난다.
+      tile.classList.toggle('equipped', i === mainSlot);
     }
   }
 
-  /** 타일 하나에 레벨을 입힌다. 색은 CSS가 data-level로 고른다. */
+  /** 타일 하나에 레벨을 입힌다. 색과 크기는 CSS가 data-level·data-tier로 고른다. */
   #paint(tile, level) {
-    tile.dataset.level = String(level);
-    tile.querySelector('.mark').textContent = markOf(level);
-    tile.querySelector('.lv').textContent = String(level);
+    if (tile.dataset.level !== String(level)) {
+      tile.dataset.level = String(level);
+      tile.dataset.tier = String(tierOf(level));
+      tile.innerHTML = `${weaponSvg(level)}<span class="lv">${level}</span>`;
+    }
   }
 
   /**
@@ -226,34 +259,28 @@ export class MergeBoard {
     if (flash) cell.classList.add('flash');
   }
 
-  /** 머리줄과 구매 버튼을 한꺼번에 다시 그리고, 바뀐 화력을 밖으로 알린다. */
+  /** 구매 버튼을 다시 그리고, 바뀐 화력을 밖으로 알린다. */
   #refresh() {
     const s = this.stats();
-
-    this.el.main.innerHTML = `주포 <b>LV ${s.mainLevel || '-'}</b>`;
-    this.el.power.querySelector('b').textContent = s.power.toFixed(1);
-    this.el.support.textContent = s.support > 0.05 ? ` (+${s.support.toFixed(1)} 보조)` : '';
-
     this.#refreshBuyButton(s);
     this.onPowerChange(s.power);
   }
 
+  /**
+   * 구매 버튼은 스크랩 아이콘과 가격만 보여 준다.
+   * 못 살 때는 흐려질 뿐, 문장으로 설명하지 않는다.
+   */
   #refreshBuyButton(stats = null) {
     const s = stats ?? this.stats();
     const cost = this.cost;
-    const wallet = this.getWallet();
+    const canBuy = !s.full && this.getWallet() >= cost;
 
-    let note = '';
-    if (s.full) note = '보드가 가득 찼다 · 분해하거나 합성하자';
-    else if (wallet < cost) note = `스크랩 ${cost - wallet} 더 모으면 살 수 있다`;
-
-    const signature = `${cost}|${note}`;
+    const signature = `${cost}|${canBuy}`;
     if (signature === this.buySignature) return;
     this.buySignature = signature;
 
     this.el.cost.textContent = String(cost);
-    this.el.note.textContent = note;
-    this.buyBtn.disabled = note !== '';
+    this.buyBtn.disabled = !canBuy;
   }
 
   // --- 끌어다 놓기 ---------------------------------------------------------
@@ -270,7 +297,8 @@ export class MergeBoard {
     if (!cell) return;
 
     const from = Number(cell.dataset.index);
-    if (!this.slots[from]) return;
+    const level = this.slots[from];
+    if (!level) return;
 
     e.preventDefault();
 
@@ -278,26 +306,33 @@ export class MergeBoard {
     const rects = this.cells.map((c) => c.getBoundingClientRect());
     const box = rects[from];
 
+    // 손끝을 따라다니는 타일. 보드 밖까지 나가므로 body에 붙인다.
     const tile = document.createElement('div');
     tile.className = 'wpn drag';
-    tile.innerHTML = '<span class="mark"></span><span class="lv"></span>';
-    tile.style.width = `${box.width - 6}px`;
-    tile.style.height = `${box.height - 6}px`;
-    this.#paint(tile, this.slots[from]);
-    this.root.appendChild(tile);
+    tile.style.width = `${box.width - 4}px`;
+    tile.style.height = `${box.height - 4}px`;
+    this.#paint(tile, level);
+    document.body.appendChild(tile);
 
     this.cells[from].classList.add('picked');
 
+    // 합성되는 칸을 미리 알려 준다. 같은 레벨이면 은은히 빛난다.
+    if (level < WEAPON.MAX_LEVEL) {
+      for (let i = 0; i < this.size; i++) {
+        if (i !== from && this.slots[i] === level) this.cells[i].classList.add('hint');
+      }
+    }
+    this.trash.classList.add('armed');
+
     this.drag = {
       from,
+      level,
       tile,
       rects,
       trashRect: this.trash.getBoundingClientRect(),
       pointerId: e.pointerId,
       over: null,
     };
-
-    boardInput.dragging = true;
 
     window.addEventListener('pointermove', this.onPointerMove, { passive: false });
     window.addEventListener('pointerup', this.onPointerUp);
@@ -328,11 +363,10 @@ export class MergeBoard {
     window.removeEventListener('pointercancel', this.onPointerCancel);
 
     this.drag.tile.remove();
-    for (const cell of this.cells) cell.classList.remove('over', 'merge', 'picked');
-    this.trash.classList.remove('over');
+    for (const cell of this.cells) cell.classList.remove('over', 'merge', 'picked', 'hint');
+    this.trash.classList.remove('over', 'armed');
 
     this.drag = null;
-    boardInput.dragging = false;
   }
 
   #follow(x, y) {
@@ -350,7 +384,7 @@ export class MergeBoard {
     return null;
   }
 
-  /** 지금 겨누고 있는 자리를 알려 준다. 합성이 되는 자리는 금색으로 구분한다. */
+  /** 지금 겨누고 있는 자리를 알려 준다. 합성이 되는 자리는 더 밝게 구분한다. */
   #highlight(target) {
     if (this.drag.over === target) return;
     this.drag.over = target;
@@ -360,7 +394,7 @@ export class MergeBoard {
 
     if (typeof target !== 'number' || target === this.drag.from) return;
 
-    const level = this.slots[this.drag.from];
+    const level = this.drag.level;
     const mergeable = this.slots[target] === level && level < WEAPON.MAX_LEVEL;
     this.cells[target].classList.add(mergeable ? 'merge' : 'over');
   }
@@ -375,9 +409,11 @@ export class MergeBoard {
     if (!level || target === null || target === from) return;
 
     if (target === 'trash') {
+      const amount = refundOf(level);
       this.slots[from] = 0;
       this.#render();
-      this.refund(refundOf(level));
+      this.refund(amount);
+      this.#showRefund(amount);
       this.#refresh();
       return;
     }
@@ -401,4 +437,14 @@ export class MergeBoard {
     this.#render();
   }
 
+  /** 분해함 위에 얼마를 돌려받았는지 잠깐 띄운다. */
+  #showRefund(amount) {
+    const el = this.el.refund;
+    if (!el) return;
+
+    el.textContent = `+${amount}`;
+    el.classList.remove('show');
+    void el.offsetWidth; // 애니메이션 되감기
+    el.classList.add('show');
+  }
 }

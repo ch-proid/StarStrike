@@ -70,6 +70,7 @@ export class EnemyField {
           baseX: 0,
           swayPhase: 0,
           time: 0,
+          vx: 0, // 좌우 속도. 자동 조준이 흔들리는 적을 앞질러 겨누는 데 쓴다.
         });
       }
 
@@ -111,6 +112,7 @@ export class EnemyField {
       (def.SPEED_MIN + Math.random() * (def.SPEED_MAX - def.SPEED_MIN)) * this.speedScale;
     e.flash = 0;
     e.time = 0;
+    e.vx = 0;
     e.swayPhase = Math.random() * Math.PI * 2;
 
     // 흔들리며 내려오는 적은 흔들림 폭만큼 안쪽에서 시작해야 화면을 벗어나지 않는다.
@@ -135,6 +137,8 @@ export class EnemyField {
 
       // 원반은 좌우로 흔들리며 내려온다.
       if (def.SWAY_AMP > 0) {
+        // 좌우 속도는 흔들림의 미분값이다. 자동 조준이 이 값으로 앞질러 겨눈다.
+        e.vx = Math.cos(e.time * def.SWAY_FREQ + e.swayPhase) * def.SWAY_AMP * def.SWAY_FREQ;
         e.group.position.x = e.baseX + Math.sin(e.time * def.SWAY_FREQ + e.swayPhase) * def.SWAY_AMP;
       }
       if (def.SPIN > 0) {

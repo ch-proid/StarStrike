@@ -8,12 +8,25 @@ import { SpaceBackground } from './space-background.js';
 import { Ship } from './ship.js';
 import { CameraFX } from './camera-fx.js';
 import { Game } from './combat/game.js';
-import { createBossStation } from './ships/boss-station.js';
 import { FIELD, VIEW } from './combat/tuning.js';
 
-// --- 씬 / 렌더러 초기화 ---
+// --- 폰 프레임 ---
+//
+// 게임 전체가 세로 한 칼럼 안에서만 돈다. 렌더러도 카메라 비율도 창이 아니라
+// 이 칼럼을 기준으로 잡는다. 그래야 넓은 데스크톱 창에서도 폰과 같은 구도가 나온다.
+// 칼럼 바깥은 어두운 색으로 비워 둔다(index.html의 --bg-void).
 
+const frame = document.getElementById('frame');
 const app = document.getElementById('app');
+
+const frameSize = () => ({
+  width: Math.max(frame.clientWidth, 1),
+  height: Math.max(frame.clientHeight, 1),
+});
+
+let { width: viewWidth, height: viewHeight } = frameSize();
+
+// --- 씬 / 렌더러 초기화 ---
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x03040c);
@@ -21,17 +34,12 @@ scene.background = new THREE.Color(0x03040c);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 const pixelRatio = Math.min(window.devicePixelRatio, 2);
 renderer.setPixelRatio(pixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setSize(viewWidth, viewHeight);
 app.appendChild(renderer.domElement);
 
 // --- 카메라: 위에서 살짝 내려다보는 원근 카메라로 2.5D 깊이감을 준다 ---
 
-const camera = new THREE.PerspectiveCamera(
-  60,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  200
-);
+const camera = new THREE.PerspectiveCamera(60, viewWidth / viewHeight, 0.1, 200);
 
 // 기준 배치. 시선이 z=0 평면의 CAMERA_LOOK_AT를 지나므로, 그 점이 곧 화면 중심이다.
 const CAMERA_BASE_POSITION = new THREE.Vector3(0, -2, 16);
@@ -57,17 +65,31 @@ function getVisibleHalfWidthAtZ0() {
   return visibleHalfHeightAtZ0() * camera.aspect;
 }
 
+const _projected = new THREE.Vector3();
+
+/** 전장 좌표를 폰 프레임 안의 px로 옮긴다. 뜨는 피해 숫자가 이 값을 쓴다. */
+function project(x, y) {
+  camera.updateMatrixWorld();
+  _projected.set(x, y, 0).project(camera);
+  return {
+    x: (_projected.x * 0.5 + 0.5) * viewWidth,
+    y: (-_projected.y * 0.5 + 0.5) * viewHeight,
+  };
+}
+
 /**
  * 머지 보드가 화면 아래를 차지한 만큼 전장을 위로 올린다.
  *
  * 카메라 위치와 바라보는 점을 같은 값만큼 내리면 기울기와 거리는 그대로 두고
  * 프레임만 세로로 옮길 수 있다. 얼마나 옮길지는 "보드 윗변이 방어선보다
  * VIEW.BOARD_TOP_MARGIN만큼 아래에 오도록"이라는 한 줄로 정한다.
+ *
+ * 방어선의 화면상 y도 여기서 함께 재 CSS 변수로 넘긴다. 체력 바가 그 자리에 붙는다.
  */
 function applyFraming() {
   const boardEl = document.getElementById('board');
   const ratio = boardEl
-    ? Math.min(boardEl.getBoundingClientRect().height / window.innerHeight, VIEW.BOARD_RATIO_MAX)
+    ? Math.min(boardEl.getBoundingClientRect().height / viewHeight, VIEW.BOARD_RATIO_MAX)
     : 0;
 
   const halfHeight = visibleHalfHeightAtZ0();
@@ -86,6 +108,8 @@ function applyFraming() {
   camera.updateMatrixWorld();
 
   cameraFX.setBase(camera.position);
+
+  frame.style.setProperty('--line-y', `${project(0, FIELD.DEFENSE_LINE_Y).y}px`);
 }
 
 applyFraming();
@@ -96,11 +120,11 @@ let visibleHalfWidth = getVisibleHalfWidthAtZ0();
 
 const composer = new EffectComposer(renderer);
 composer.setPixelRatio(pixelRatio);
-composer.setSize(window.innerWidth, window.innerHeight);
+composer.setSize(viewWidth, viewHeight);
 composer.addPass(new RenderPass(scene, camera));
 
 const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  new THREE.Vector2(viewWidth, viewHeight),
   0.55, // strength: 하이퍼캐주얼 모바일 기준으로 절제
   0.4, // radius
   0.82 // threshold: 밝은 발광부만 번지게
@@ -123,29 +147,35 @@ rimLight.position.set(-4, -6, 3);
 scene.add(rimLight);
 
 // --- 게임 오브젝트 ---
+//
+// 전장에는 배경 은하수와 기체·적·탄·방어선만 둔다.
+// 장식용 정거장은 걷어냈다. 보스는 보스전에만 나온다(combat/boss.js).
 
 const PLAYER_MOVE_LIMIT_RATIO = 0.85; // 화면 가장자리 여백용 계수
 
 const background = new SpaceBackground(scene, camera);
 const ship = new Ship(scene, visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
 
-// 배경 장식용 정거장: 맨 뒤 멀리에 두어 스케일감을 준다.
-// 실제로 싸우는 보스는 별도 인스턴스라, 보스전 동안에는 이 장식을 숨긴다(Game이 맡는다).
-const bossDecor = createBossStation();
-bossDecor.position.set(0, 12, -26);
-scene.add(bossDecor);
-
 // 코어 루프: 웨이브 → 보스 → 스테이지 클리어 / 사망 → 재도전
-const game = new Game(scene, ship, cameraFX, visibleHalfWidth, { bossDecor });
+const game = new Game(scene, ship, cameraFX, visibleHalfWidth, { project });
 
 // --- 리사이즈 대응 ---
+//
+// 창 크기뿐 아니라 주소창이 접히며 프레임 높이가 바뀌는 경우도 잡아야 한다.
+// 그래서 창이 아니라 프레임 자체를 지켜본다.
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+function resize() {
+  const size = frameSize();
+  if (size.width === viewWidth && size.height === viewHeight) return;
+
+  viewWidth = size.width;
+  viewHeight = size.height;
+
+  camera.aspect = viewWidth / viewHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
-  bloomPass.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(viewWidth, viewHeight);
+  composer.setSize(viewWidth, viewHeight);
+  bloomPass.setSize(viewWidth, viewHeight);
 
   // 보드 높이가 화면 높이에 매여 있어, 창이 바뀌면 화면 구성도 다시 잡는다.
   applyFraming();
@@ -153,7 +183,10 @@ window.addEventListener('resize', () => {
   ship.setMoveLimit(visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
   game.setBounds(visibleHalfWidth);
   background.resize(camera);
-});
+}
+
+new ResizeObserver(resize).observe(frame);
+window.addEventListener('resize', resize);
 
 // --- 게임 루프 ---
 
@@ -169,8 +202,6 @@ function animate() {
 
   ship.update(gameDt);
   game.update(gameDt, dt);
-
-  bossDecor.rotation.z += 0.06 * gameDt;
 
   cameraFX.update(dt);
 

@@ -7,7 +7,54 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <title>스타스트라이크</title>
+
+    <!-- 글꼴: Pretendard. 못 받아 오면 system-ui로 떨어진다. -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
+
     <style>
+      /* =====================================================================
+         디자인 토큰
+         색은 셋뿐이다. 강조(시안) · 재화(초록) · 위험(붉은색).
+         나머지는 배경 톤과 글자색이다. 모서리 반경은 두 단계만 쓴다.
+         ===================================================================== */
+
+      :root {
+        --accent: #4fe0ff;
+        --accent-soft: rgba(79, 224, 255, 0.16);
+        --accent-line: rgba(79, 224, 255, 0.3);
+        --money: #7dfb9b;
+        --danger: #ff4a5e;
+
+        --bg-void: #04050a; /* 폰 칼럼 바깥의 빈 여백 */
+        --bg-field: #05070f; /* 전장 바탕 */
+        --bg-panel: #0a0f1b; /* 보드·패널 바탕 */
+        --bg-chip: rgba(255, 255, 255, 0.045); /* 빈 칸 */
+        --hairline: rgba(150, 195, 235, 0.13);
+
+        --text: #e9f3ff;
+        --text-dim: #7d92ac;
+
+        --r-sm: 8px;
+        --r-lg: 16px;
+
+        --track: 0.01em; /* 본문 자간 */
+        --track-wide: 0.16em; /* 라벨·배너 자간 */
+
+        --frame-max: 500px; /* tuning.js VIEW.FRAME_MAX_WIDTH와 같아야 한다 */
+        --board-h: clamp(184px, 31vh, 268px);
+        --line-y: 62%; /* 방어선의 화면상 y. main.js가 매 프레임 갱신한다. */
+
+        --font:
+          'Pretendard Variable', Pretendard, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       html,
       body {
         margin: 0;
@@ -15,178 +62,247 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: #000;
+        background: var(--bg-void);
         touch-action: none;
       }
 
+      body {
+        display: flex;
+        justify-content: center;
+        font-family: var(--font);
+        letter-spacing: var(--track);
+        color: var(--text);
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: 'tnum' 1;
+      }
+
+      /* --- 폰 프레임: 게임 전체가 이 세로 칼럼 안에서만 돈다 --- */
+
+      #frame {
+        position: relative;
+        width: min(100vw, var(--frame-max));
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+        background: var(--bg-field);
+        box-shadow: 0 0 0 1px rgba(120, 180, 230, 0.07);
+      }
+
       #app {
-        position: fixed;
+        position: absolute;
         inset: 0;
-        width: 100%;
-        height: 100%;
       }
 
       canvas {
         display: block;
       }
 
-      /* --- 공통 --- */
-
-      #hud,
-      #banner,
-      #board,
-      .screen {
-        font-family: system-ui, -apple-system, sans-serif;
-        user-select: none;
-        -webkit-user-select: none;
-      }
-
       .hidden {
         display: none !important;
       }
 
-      /* 층위: 보드(5) < HUD·배너(10) < 결과 화면(20) < 드래그 중인 무기(40) */
+      /* 층위: 보드(5) < 방어선 HUD(8) < 상단 HUD·배너(10) < 연출(12) < 결과(20) < 드래그(40) */
 
-      /* --- 인게임 HUD: 화면 위쪽 --- */
+      /* =====================================================================
+         상단 HUD: 얇은 한 줄
+         ===================================================================== */
 
       #hud {
-        position: fixed;
-        top: calc(env(safe-area-inset-top, 0px) + 12px);
+        position: absolute;
+        top: calc(env(safe-area-inset-top, 0px) + 10px);
+        left: 14px;
+        right: 14px;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        pointer-events: none;
+      }
+
+      #progress {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--text);
+        opacity: 0.82;
+      }
+
+      #scrap {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--money);
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      #scrap svg {
+        width: 13px;
+        height: 13px;
+        fill: currentColor;
+        opacity: 0.9;
+      }
+
+      /* 보스 체력 바: 보스전 동안만 상단 HUD 아래 */
+
+      #boss-hp {
+        position: absolute;
+        top: calc(env(safe-area-inset-top, 0px) + 36px);
         left: 14px;
         right: 14px;
         z-index: 10;
         pointer-events: none;
       }
 
-      #hud-row {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      #progress {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        color: #cfe6ff;
-        letter-spacing: 0.1em;
-      }
-
-      #stage-label {
-        font-size: 13px;
-        font-weight: 700;
-        opacity: 0.75;
-      }
-
-      #wave-label {
-        font-size: 20px;
-        font-weight: 800;
-        text-shadow: 0 0 10px rgba(90, 180, 255, 0.5);
-      }
-
-      #scrap {
-        display: flex;
-        align-items: baseline;
-        gap: 6px;
-        color: #9dff9a;
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-shadow: 0 0 8px rgba(120, 255, 150, 0.5);
-      }
-
-      #scrap .label {
-        font-size: 11px;
-        font-weight: 500;
-        opacity: 0.65;
-      }
-
-      /* 체력 바 */
-
-      #player-hp {
-        margin-top: 8px;
-        max-width: 240px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .bar {
-        flex: 1;
-        height: 9px;
-        border-radius: 5px;
-        background: rgba(255, 255, 255, 0.1);
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+      #boss-hp .track {
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.09);
         overflow: hidden;
       }
 
-      .bar > i {
+      #boss-hp-fill {
         display: block;
         height: 100%;
         width: 100%;
-        border-radius: 5px;
         transform-origin: left center;
-        transition: transform 0.16s ease-out;
+        background: var(--danger);
+        box-shadow: 0 0 10px rgba(255, 74, 94, 0.8);
+        transition: transform 0.14s ease-out;
       }
 
-      #player-hp-fill {
-        background: linear-gradient(90deg, #49b6ff, #7fe9ff);
-        box-shadow: 0 0 10px rgba(80, 190, 255, 0.6);
-      }
+      /* =====================================================================
+         방어선에 붙은 체력 바
+         선이 압박의 축이므로, 남은 체력도 그 자리에서 읽힌다.
+         ===================================================================== */
 
-      #player-hp.low #player-hp-fill {
-        background: linear-gradient(90deg, #ff4d4d, #ff9a5a);
-        box-shadow: 0 0 10px rgba(255, 90, 90, 0.7);
-      }
-
-      #player-hp-text {
-        color: #cfe6ff;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        opacity: 0.8;
-        min-width: 54px;
-      }
-
-      /* 보스 체력 바: 보스전 동안만 화면 위 가운데 */
-
-      #boss-hp {
-        margin-top: 14px;
+      #line-hp {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        /* 선 바로 아래에 붙인다. 선의 글로우 위에 겹치면 숫자가 묻힌다. */
+        top: var(--line-y);
+        margin-top: 15px;
+        z-index: 8;
         display: flex;
-        flex-direction: column;
         align-items: center;
-        gap: 5px;
+        gap: 7px;
+        pointer-events: none;
       }
 
-      #boss-hp .name {
-        color: #ffb0b0;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.22em;
-        text-shadow: 0 0 8px rgba(255, 90, 90, 0.55);
+      #line-hp .track {
+        flex: 1;
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
       }
 
-      /* 세로 배치 안에서는 .bar의 flex:1이 높이를 0으로 눌러 버린다. 그래서 되돌린다. */
-      #boss-hp .bar {
-        flex: 0 0 auto;
+      #hp-fill {
+        display: block;
+        height: 100%;
         width: 100%;
-        max-width: 420px;
-        height: 12px;
-        border-radius: 6px;
+        transform-origin: left center;
+        background: var(--accent);
+        box-shadow: 0 0 8px var(--accent-line);
+        transition:
+          transform 0.16s ease-out,
+          background 0.2s;
       }
 
-      #boss-hp-fill {
-        background: linear-gradient(90deg, #ff2d2d, #ff8a1e);
-        box-shadow: 0 0 14px rgba(255, 70, 40, 0.7);
-        border-radius: 6px;
+      #line-hp.low #hp-fill {
+        background: var(--danger);
+        box-shadow: 0 0 9px rgba(255, 74, 94, 0.8);
       }
 
-      /* --- 배너: 웨이브 시작·보스 경고 --- */
+      #hp-text {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: var(--text-dim);
+        min-width: 22px;
+        text-align: right;
+      }
+
+      #line-hp.low #hp-text {
+        color: var(--danger);
+      }
+
+      /* =====================================================================
+         피해 연출: 붉은 비네트 + 뜨는 숫자
+         ===================================================================== */
+
+      #fx {
+        position: absolute;
+        inset: 0;
+        z-index: 12;
+        pointer-events: none;
+        overflow: hidden;
+      }
+
+      #vignette {
+        position: absolute;
+        inset: 0;
+        z-index: 12;
+        pointer-events: none;
+        opacity: 0;
+        box-shadow:
+          inset 0 0 50px 4px rgba(255, 74, 94, 0.5),
+          inset 0 0 130px 26px rgba(255, 74, 94, 0.2);
+      }
+
+      #vignette.flash {
+        animation: vignette 0.42s ease-out;
+      }
+
+      @keyframes vignette {
+        0% {
+          opacity: 0;
+        }
+        14% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+
+      .dmg {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        font-size: 17px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        color: var(--danger);
+        text-shadow: 0 0 12px rgba(255, 74, 94, 0.75);
+        animation: dmg-float 0.8s ease-out forwards;
+      }
+
+      @keyframes dmg-float {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -30%) scale(0.8);
+        }
+        18% {
+          opacity: 1;
+          transform: translate(-50%, -60%) scale(1.1);
+        }
+        100% {
+          opacity: 0;
+          transform: translate(-50%, -170%) scale(1);
+        }
+      }
+
+      /* =====================================================================
+         배너: 웨이브 시작 · 보스 경고
+         ===================================================================== */
 
       #banner {
-        position: fixed;
-        top: 26%;
+        position: absolute;
+        top: 27%;
         left: 0;
         right: 0;
         z-index: 10;
@@ -195,34 +311,34 @@
       }
 
       #banner-title {
-        font-size: 34px;
-        font-weight: 900;
-        letter-spacing: 0.16em;
-        color: #eaf6ff;
-        text-shadow: 0 0 18px rgba(90, 180, 255, 0.7);
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: var(--track-wide);
+        color: var(--text);
+        text-shadow: 0 0 20px var(--accent-line);
       }
 
       #banner-sub {
-        margin-top: 6px;
-        font-size: 13px;
+        margin-top: 5px;
+        font-size: 11px;
         font-weight: 600;
-        letter-spacing: 0.2em;
-        color: #9fc4e8;
+        letter-spacing: var(--track-wide);
+        color: var(--text-dim);
       }
 
       #banner.danger #banner-title {
-        color: #ffdada;
-        text-shadow: 0 0 22px rgba(255, 60, 60, 0.85);
+        color: #ffe4e6;
+        text-shadow: 0 0 24px rgba(255, 74, 94, 0.85);
         animation: pulse 0.5s ease-in-out infinite alternate;
       }
 
       #banner.danger #banner-sub {
-        color: #ff9c9c;
+        color: var(--danger);
       }
 
       @keyframes pulse {
         from {
-          opacity: 0.55;
+          opacity: 0.6;
           transform: scale(0.97);
         }
         to {
@@ -231,52 +347,50 @@
         }
       }
 
-      /* --- 결과 화면(스테이지 클리어 / 사망) --- */
+      /* =====================================================================
+         결과 화면: 스테이지 클리어 · 사망
+         ===================================================================== */
 
-      /* 결과 화면은 보드 위를 덮는다. 정산 중에는 보드를 만질 수 없어야 한다. */
       .screen {
-        position: fixed;
+        position: absolute;
         inset: 0;
         z-index: 20;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
-        background: rgba(3, 5, 14, 0.78);
+        padding: 22px;
+        background: rgba(4, 6, 13, 0.82);
         backdrop-filter: blur(3px);
       }
 
       .panel {
         width: 100%;
-        max-width: 320px;
-        padding: 26px 22px 22px;
-        border-radius: 16px;
-        background: rgba(10, 16, 30, 0.92);
-        box-shadow:
-          inset 0 0 0 1px rgba(120, 190, 255, 0.22),
-          0 18px 50px rgba(0, 0, 0, 0.6);
+        max-width: 300px;
+        padding: 24px 20px 20px;
+        border-radius: var(--r-lg);
+        background: var(--bg-panel);
+        box-shadow: inset 0 0 0 1px var(--hairline);
         text-align: center;
       }
 
       .panel h1 {
-        margin: 0 0 4px;
-        font-size: 26px;
-        font-weight: 900;
-        letter-spacing: 0.1em;
-        color: #eaf6ff;
-        text-shadow: 0 0 16px rgba(90, 180, 255, 0.6);
+        margin: 0;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: var(--track-wide);
+        color: var(--text);
       }
 
       #screen-game-over .panel h1 {
-        color: #ffdada;
-        text-shadow: 0 0 16px rgba(255, 70, 70, 0.6);
+        color: #ffe4e6;
       }
 
       .panel .tagline {
-        margin: 0 0 18px;
-        font-size: 12px;
-        letter-spacing: 0.16em;
-        color: #7f9bbb;
+        margin: 6px 0 16px;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: var(--track-wide);
+        color: var(--text-dim);
       }
 
       .row {
@@ -285,131 +399,65 @@
         justify-content: space-between;
         margin: 0;
         padding: 9px 2px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        font-size: 13px;
-        color: #a8c2dc;
+        border-top: 1px solid var(--hairline);
+        font-size: 12px;
+        letter-spacing: var(--track);
+        color: var(--text-dim);
       }
 
       .row b {
-        font-size: 16px;
-        font-weight: 800;
-        color: #eaf6ff;
-        letter-spacing: 0.04em;
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
       }
 
       .row.scrap b {
-        color: #9dff9a;
+        color: var(--money);
       }
 
-      button {
+      /* 채워진 시안 버튼은 화면에 하나뿐이다: 지금 눌러야 할 것. */
+      .btn-primary {
         display: block;
         width: 100%;
-        margin-top: 14px;
-        padding: 14px 12px;
+        margin-top: 16px;
+        padding: 13px 12px;
         border: 0;
-        border-radius: 11px;
+        border-radius: var(--r-sm);
         font-family: inherit;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 800;
-        letter-spacing: 0.08em;
-        color: #04121f;
-        background: linear-gradient(180deg, #7fe9ff, #35a8e8);
-        box-shadow: 0 8px 22px rgba(40, 150, 220, 0.35);
+        letter-spacing: 0.06em;
+        color: #032230;
+        background: var(--accent);
+        box-shadow: 0 6px 20px rgba(79, 224, 255, 0.22);
         cursor: pointer;
       }
 
-      button:active {
+      .btn-primary:active {
         transform: translateY(1px);
       }
 
-      button.ghost {
-        margin-top: 8px;
-        color: #7f9bbb;
-        background: transparent;
-        box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.2);
-        font-size: 12px;
-        font-weight: 600;
-        padding: 11px;
-      }
-
-      button.ghost[disabled] {
-        opacity: 0.45;
-        cursor: default;
-      }
-
-      /* --- 머지 보드: 화면 아래쪽 --- */
+      /* =====================================================================
+         머지 보드
+         ===================================================================== */
 
       #board {
-        position: fixed;
+        position: absolute;
         left: 0;
         right: 0;
         bottom: 0;
         z-index: 5;
-        box-sizing: border-box;
-        height: calc(clamp(190px, 33vh, 320px) + env(safe-area-inset-bottom, 0px));
-        padding: 7px 10px calc(9px + env(safe-area-inset-bottom, 0px));
+        height: calc(var(--board-h) + env(safe-area-inset-bottom, 0px));
+        padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
         display: flex;
-        flex-direction: column;
-        gap: 6px;
-        background: linear-gradient(180deg, rgba(6, 11, 24, 0.7), rgba(4, 7, 16, 0.97) 18%);
-        box-shadow:
-          inset 0 1px 0 rgba(120, 190, 255, 0.2),
-          0 -16px 36px rgba(0, 0, 0, 0.55);
+        background: linear-gradient(180deg, rgba(8, 13, 26, 0.55), var(--bg-panel) 14%);
+        box-shadow: inset 0 1px 0 var(--accent-line);
         touch-action: none;
       }
-
-      /* 머리줄: 주포 상태 · 안내 문구 · 총 화력 */
-
-      #board-head {
-        display: flex;
-        align-items: baseline;
-        gap: 8px;
-        font-size: 11px;
-        letter-spacing: 0.06em;
-        color: #7f9bbb;
-        white-space: nowrap;
-      }
-
-      #board-main b {
-        color: #cfe6ff;
-        font-size: 13px;
-        font-weight: 800;
-      }
-
-      #board-note {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        text-align: center;
-        color: #ffbf6b;
-      }
-
-      #board-power {
-        margin-left: auto;
-        color: #7f9bbb;
-      }
-
-      #board-power b {
-        color: #7fe9ff;
-        font-size: 14px;
-        font-weight: 800;
-        text-shadow: 0 0 10px rgba(90, 220, 255, 0.55);
-      }
-
-      #board-support {
-        color: #9dff9a;
-        font-style: normal;
-      }
-
-      /* 몸통: 왼쪽 그리드 + 오른쪽 세로줄 */
 
       #board-body {
         flex: 1;
         min-height: 0;
-        width: 100%;
-        max-width: 560px;
-        margin: 0 auto;
         display: flex;
         gap: 8px;
       }
@@ -423,23 +471,32 @@
 
       .cell {
         position: relative;
-        border-radius: 10px;
-        background: rgba(255, 255, 255, 0.035);
-        box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.13);
+        border-radius: var(--r-sm);
+        background: var(--bg-chip);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        transition: box-shadow 0.14s;
       }
 
+      /* 놓을 자리 */
       .cell.over {
-        background: rgba(127, 233, 255, 0.1);
-        box-shadow: inset 0 0 0 2px rgba(127, 233, 255, 0.75);
+        box-shadow: inset 0 0 0 1.5px var(--accent-line);
       }
 
+      /* 합성되는 자리 */
       .cell.merge {
-        background: rgba(255, 214, 102, 0.14);
-        box-shadow: inset 0 0 0 2px rgba(255, 214, 102, 0.9);
+        background: var(--accent-soft);
+        box-shadow: inset 0 0 0 2px var(--accent);
+      }
+
+      /* 드래그를 시작하면 같은 레벨 칸들이 은은히 빛난다 */
+      .cell.hint {
+        box-shadow:
+          inset 0 0 0 1px var(--accent-line),
+          0 0 12px var(--accent-soft);
       }
 
       .cell.picked > .wpn {
-        opacity: 0.25;
+        opacity: 0.22;
       }
 
       /* 합성 순간의 번쩍임 */
@@ -449,7 +506,7 @@
         inset: -5px;
         border-radius: 13px;
         pointer-events: none;
-        background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 68%);
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 68%);
         animation: cell-flash 0.36s ease-out forwards;
       }
 
@@ -464,91 +521,112 @@
         }
       }
 
-      /* 무기 타일 */
+      /* --- 무기 타일: 발칸 실루엣 + 구석의 레벨 배지 --- */
 
       .wpn {
         position: absolute;
-        inset: 3px;
-        border-radius: 8px;
+        inset: 2px;
+        border-radius: var(--r-sm);
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 1px;
-        color: #06121c;
-        --c1: #9aa8b4;
-        --c2: #5b6874;
-        --glow: rgba(160, 180, 200, 0.35);
-        background: linear-gradient(165deg, var(--c1), var(--c2));
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.4),
-          0 3px 9px rgba(0, 0, 0, 0.45),
-          0 0 14px var(--glow);
         cursor: grab;
+
+        /* 레벨 구간별 색. 아래 data-level 규칙이 갈아 끼운다. */
+        --c1: #b3c0cc;
+        --glow: rgba(180, 200, 220, 0.35);
+
+        color: var(--c1);
+        background: linear-gradient(170deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
       }
 
-      .wpn .mark {
-        font-size: 9px;
-        line-height: 1;
-        letter-spacing: -1px;
-        opacity: 0.72;
+      .wpn svg {
+        width: 58%;
+        height: 58%;
+        fill: currentColor;
+        filter: drop-shadow(0 0 5px var(--glow));
+      }
+
+      /* 레벨 구간이 오를수록 실루엣도 커진다 */
+      .wpn[data-tier='2'] svg {
+        width: 65%;
+        height: 65%;
+      }
+      .wpn[data-tier='3'] svg {
+        width: 72%;
+        height: 72%;
+      }
+      .wpn[data-tier='4'] svg {
+        width: 80%;
+        height: 80%;
+      }
+
+      /* 장착 중(가장 높은 레벨): 은은한 테두리 발광 */
+      .wpn.equipped {
+        box-shadow:
+          inset 0 0 0 1.5px var(--c1),
+          0 0 14px var(--glow);
       }
 
       .wpn .lv {
-        font-size: 20px;
-        font-weight: 900;
-        line-height: 1;
-        letter-spacing: -0.02em;
-        text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28);
+        position: absolute;
+        right: 3px;
+        bottom: 2px;
+        min-width: 13px;
+        padding: 0 3px;
+        border-radius: 5px;
+        background: rgba(3, 6, 12, 0.72);
+        color: var(--c1);
+        font-size: 10px;
+        font-weight: 800;
+        line-height: 14px;
+        text-align: center;
+        letter-spacing: 0;
       }
 
       /* 레벨 1~3 회색→시안, 4~6 파랑→보라, 7 이상 금색 */
+      .wpn[data-level='1'] {
+        --c1: #b3c0cc;
+        --glow: rgba(180, 200, 220, 0.3);
+      }
       .wpn[data-level='2'] {
-        --c1: #7fd0dd;
-        --c2: #3d7f8d;
-        --glow: rgba(110, 210, 230, 0.45);
+        --c1: #8fdfe8;
+        --glow: rgba(130, 220, 235, 0.4);
       }
       .wpn[data-level='3'] {
-        --c1: #6ce8ff;
-        --c2: #1f93b6;
-        --glow: rgba(90, 225, 255, 0.6);
+        --c1: #4fe0ff;
+        --glow: rgba(79, 224, 255, 0.55);
       }
       .wpn[data-level='4'] {
-        --c1: #6fb4ff;
-        --c2: #2350c8;
-        --glow: rgba(90, 150, 255, 0.6);
+        --c1: #6fb0ff;
+        --glow: rgba(100, 160, 255, 0.55);
       }
       .wpn[data-level='5'] {
         --c1: #9a97ff;
-        --c2: #4534c4;
-        --glow: rgba(140, 130, 255, 0.6);
+        --glow: rgba(150, 145, 255, 0.55);
       }
       .wpn[data-level='6'] {
-        --c1: #c98cf5;
-        --c2: #6c1fb0;
-        --glow: rgba(190, 110, 245, 0.65);
+        --c1: #cb8cf5;
+        --glow: rgba(200, 130, 245, 0.6);
       }
       .wpn[data-level='7'] {
         --c1: #ffd06a;
-        --c2: #c07a10;
-        --glow: rgba(255, 190, 70, 0.7);
+        --glow: rgba(255, 200, 90, 0.6);
       }
       .wpn[data-level='8'] {
         --c1: #ffdc80;
-        --c2: #cf8c0c;
-        --glow: rgba(255, 205, 90, 0.75);
+        --glow: rgba(255, 210, 110, 0.65);
       }
       .wpn[data-level='9'] {
         --c1: #ffe795;
-        --c2: #dfa008;
-        --glow: rgba(255, 220, 110, 0.8);
+        --glow: rgba(255, 225, 130, 0.7);
       }
       .wpn[data-level='10'],
       .wpn[data-level='11'],
       .wpn[data-level='12'] {
         --c1: #fff3c2;
-        --c2: #ecb400;
-        --glow: rgba(255, 235, 150, 0.9);
+        --glow: rgba(255, 240, 170, 0.85);
       }
 
       @keyframes wpn-pop {
@@ -556,7 +634,7 @@
           transform: scale(0.66);
         }
         55% {
-          transform: scale(1.22);
+          transform: scale(1.2);
         }
         100% {
           transform: scale(1);
@@ -573,161 +651,224 @@
         inset: auto;
         z-index: 40;
         pointer-events: none;
-        transform: translate(-50%, -50%) scale(1.14);
+        transform: translate(-50%, -50%) scale(1.12);
+        background: rgba(10, 15, 27, 0.9);
         box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.4),
+          inset 0 0 0 1.5px var(--c1),
           0 10px 22px rgba(0, 0, 0, 0.6),
           0 0 22px var(--glow);
       }
 
-      /* 오른쪽 세로줄: 구매 · 광고 자리 · 분해 */
+      /* --- 오른쪽 세로줄: 구매 · 분해 --- */
 
       #board-side {
-        flex: 0 0 96px;
+        flex: 0 0 84px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
       }
 
+      /* 화면에서 유일한 채워진 시안 버튼. 가장 먼저 눈에 들어와야 한다. */
       #btn-buy {
         flex: 1;
         margin: 0;
-        padding: 6px 4px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--r-sm);
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 3px;
-        border-radius: 10px;
-        font-size: 12px;
-        letter-spacing: 0.04em;
+        gap: 5px;
+        font-family: inherit;
+        font-size: 17px;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        color: #032230;
+        background: var(--accent);
+        box-shadow: 0 5px 16px rgba(79, 224, 255, 0.24);
+        cursor: pointer;
       }
 
-      #btn-buy .cost {
-        font-size: 15px;
-        font-weight: 900;
-        letter-spacing: 0.02em;
+      #btn-buy svg {
+        width: 15px;
+        height: 15px;
+        fill: currentColor;
+        opacity: 0.85;
+      }
+
+      #btn-buy:active {
+        transform: translateY(1px);
       }
 
       #btn-buy[disabled] {
-        color: #62788d;
-        background: rgba(255, 255, 255, 0.06);
-        box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.14);
+        color: var(--text-dim);
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: inset 0 0 0 1px var(--hairline);
         cursor: default;
       }
 
-      #btn-ad-merge {
-        flex: 0 0 auto;
-        margin: 0;
-        padding: 7px 4px;
-        font-size: 10px;
-        letter-spacing: 0.02em;
-        line-height: 1.1;
-      }
-
+      /* 분해함: 평소엔 흐린 아이콘만. 드래그 중에만 또렷해진다. */
       #board-trash {
-        flex: 0 0 34%;
+        position: relative;
+        flex: 0 0 40%;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 3px;
-        border-radius: 10px;
-        border: 1px dashed rgba(255, 140, 140, 0.42);
-        color: #ff9c9c;
-        font-size: 10px;
-        letter-spacing: 0.08em;
+        border-radius: var(--r-sm);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        color: var(--text-dim);
+        opacity: 0.34;
+        transition:
+          opacity 0.15s,
+          box-shadow 0.15s,
+          color 0.15s;
       }
 
-      #board-trash .ico {
-        font-size: 17px;
-        line-height: 1;
+      #board-trash svg {
+        width: 22px;
+        height: 22px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      #board-trash.armed {
+        opacity: 1;
+        color: var(--danger);
+        box-shadow: inset 0 0 0 1px rgba(255, 74, 94, 0.4);
       }
 
       #board-trash.over {
-        background: rgba(255, 80, 80, 0.2);
-        border-style: solid;
-        border-color: #ff9c9c;
-        color: #ffdada;
+        opacity: 1;
+        color: #fff;
+        background: rgba(255, 74, 94, 0.22);
+        box-shadow: inset 0 0 0 1.5px var(--danger);
+      }
+
+      /* 위에 놓으면 환급액이 잠깐 뜬다 */
+      #trash-refund {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 100%;
+        text-align: center;
+        color: var(--money);
+        font-size: 14px;
+        font-weight: 800;
+        text-shadow: 0 0 10px rgba(125, 251, 155, 0.6);
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #trash-refund.show {
+        animation: refund-float 0.75s ease-out forwards;
+      }
+
+      @keyframes refund-float {
+        0% {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        20% {
+          opacity: 1;
+          transform: translateY(-2px);
+        }
+        100% {
+          opacity: 0;
+          transform: translateY(-22px);
+        }
       }
     </style>
   </head>
+
   <body>
-    <div id="app"></div>
+    <!-- 폰 프레임: 세로 한 칼럼. 캔버스도 UI도 전부 이 안에 있다. -->
+    <div id="frame">
+      <div id="app"></div>
 
-    <!-- 인게임 HUD -->
-    <div id="hud">
-      <div id="hud-row">
-        <div id="progress">
-          <span id="stage-label">STAGE 1</span>
-          <span id="wave-label">WAVE 1 / 10</span>
-        </div>
-        <div id="scrap"><span id="scrap-count">0</span><span class="label">SCRAP</span></div>
+      <!-- 상단 HUD: 스테이지-웨이브 · 스크랩 -->
+      <div id="hud">
+        <span id="progress">1-1</span>
+        <span id="scrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2.4 21.6 12 12 21.6 2.4 12z M12 7.2 7.2 12 12 16.8 16.8 12z" />
+          </svg>
+          <span id="scrap-count">0</span>
+        </span>
       </div>
 
-      <div id="player-hp">
-        <div class="bar"><i id="player-hp-fill"></i></div>
-        <span id="player-hp-text">100/100</span>
-      </div>
-
+      <!-- 보스 체력: 보스전 동안만 -->
       <div id="boss-hp" class="hidden">
-        <span class="name">ORBITAL STATION</span>
-        <div class="bar"><i id="boss-hp-fill"></i></div>
-      </div>
-    </div>
-
-    <!-- 머지 보드: 칸은 board.js가 BOARD 상수만큼 만들어 넣는다. -->
-    <div id="board">
-      <div id="board-head">
-        <span id="board-main">주포 <b>LV 1</b></span>
-        <span id="board-note"></span>
-        <span id="board-power">화력 <b>1.0</b><i id="board-support"></i></span>
+        <div class="track"><i id="boss-hp-fill"></i></div>
       </div>
 
-      <div id="board-body">
-        <div id="board-grid"></div>
+      <!-- 방어선에 붙은 체력 바 -->
+      <div id="line-hp">
+        <div class="track"><i id="hp-fill"></i></div>
+        <span id="hp-text">100</span>
+      </div>
 
-        <div id="board-side">
-          <button id="btn-buy" type="button">
-            <span>무기 구매</span>
-            <span class="cost" id="buy-cost">20</span>
-          </button>
-          <!-- 자리만 잡아 둔다. 보드가 꽉 찼을 때의 보상형 광고는 나중에 붙인다. -->
-          <button id="btn-ad-merge" class="ghost" disabled>3개 레벨업 (광고) · 준비 중</button>
-          <div id="board-trash"><span class="ico">♻</span><span>분해</span></div>
+      <!-- 피해 연출 -->
+      <div id="vignette"></div>
+      <div id="fx"></div>
+
+      <!-- 머지 보드: 칸은 board.js가 BOARD 상수만큼 만들어 넣는다. -->
+      <div id="board">
+        <div id="board-body">
+          <div id="board-grid"></div>
+
+          <div id="board-side">
+            <button id="btn-buy" type="button" aria-label="무기 구매">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2.4 21.6 12 12 21.6 2.4 12z M12 7.2 7.2 12 12 16.8 16.8 12z" />
+              </svg>
+              <span id="buy-cost">14</span>
+            </button>
+
+            <!-- 광고 버튼 자리: 보상형 광고는 아웃게임 상점과 함께 붙인다. -->
+
+            <div id="board-trash" aria-label="분해">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3.5v8.5" />
+                <path d="M8.5 8.5 12 12l3.5-3.5" />
+                <path d="M4.2 14v4.3A2.2 2.2 0 0 0 6.4 20.5h11.2a2.2 2.2 0 0 0 2.2-2.2V14" />
+              </svg>
+              <span id="trash-refund"></span>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- 웨이브 시작 · 보스 경고 배너 -->
-    <div id="banner" class="hidden">
-      <div id="banner-title"></div>
-      <div id="banner-sub"></div>
-    </div>
-
-    <!-- 스테이지 클리어 -->
-    <div id="screen-stage-clear" class="screen hidden">
-      <div class="panel">
-        <h1>STAGE <span id="clear-stage">1</span> CLEAR</h1>
-        <p class="tagline">방어선을 지켜 냈다</p>
-        <p class="row scrap"><span>이번 스테이지 스크랩</span><b id="clear-scrap">0</b></p>
-        <p class="row"><span>누적 스크랩</span><b id="clear-total">0</b></p>
-        <button id="btn-next-stage">다음 스테이지</button>
-        <!-- 자리만 잡아 둔다. 보상형 광고 연동은 아웃게임 상점과 함께 붙인다. -->
-        <button id="btn-ad-scrap" class="ghost" disabled>스크랩 3배 (광고) · 준비 중</button>
+      <!-- 웨이브 시작 · 보스 경고 배너 -->
+      <div id="banner" class="hidden">
+        <div id="banner-title"></div>
+        <div id="banner-sub"></div>
       </div>
-    </div>
 
-    <!-- 사망 결과 -->
-    <div id="screen-game-over" class="screen hidden">
-      <div class="panel">
-        <h1>기체 격추</h1>
-        <p class="tagline">스크랩을 챙겨 다시 오르자</p>
-        <p class="row"><span>도달</span><b id="over-reach">STAGE 1 · WAVE 1</b></p>
-        <p class="row scrap"><span>이번 판 스크랩</span><b id="over-scrap">0</b></p>
-        <p class="row"><span>누적 스크랩</span><b id="over-total">0</b></p>
-        <p class="row"><span>최고 기록</span><b id="over-best">-</b></p>
-        <button id="btn-retry">다시 도전</button>
+      <!-- 스테이지 클리어 -->
+      <div id="screen-stage-clear" class="screen hidden">
+        <div class="panel">
+          <h1>STAGE <span id="clear-stage">1</span> CLEAR</h1>
+          <p class="tagline">방어선을 지켰다</p>
+          <p class="row scrap"><span>획득</span><b id="clear-scrap">0</b></p>
+          <p class="row"><span>누적</span><b id="clear-total">0</b></p>
+          <button id="btn-next-stage" class="btn-primary" type="button">다음 스테이지</button>
+        </div>
+      </div>
+
+      <!-- 사망 결과 -->
+      <div id="screen-game-over" class="screen hidden">
+        <div class="panel">
+          <h1>격추</h1>
+          <p class="tagline">스크랩을 챙겨 다시</p>
+          <p class="row"><span>도달</span><b id="over-reach">1-1</b></p>
+          <p class="row scrap"><span>획득</span><b id="over-scrap">0</b></p>
+          <p class="row"><span>누적</span><b id="over-total">0</b></p>
+          <p class="row"><span>최고</span><b id="over-best">-</b></p>
+          <button id="btn-retry" class="btn-primary" type="button">다시 도전</button>
+        </div>
       </div>
     </div>
 

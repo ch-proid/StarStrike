@@ -45,10 +45,58 @@ export const FIELD = {
 /**
  * 화면 구성. 머지 보드가 아래를 차지한 만큼 3D 전장을 위로 올린다.
  * 실제 계산은 main.js의 applyFraming()이 한다.
+ *
+ * 게임 전체는 세로 한 칼럼(폰 프레임) 안에서만 돈다. 렌더러와 카메라 비율도
+ * 창이 아니라 이 칼럼을 기준으로 잡아, PC와 폰이 같은 구도를 보게 한다.
  */
 export const VIEW = {
-  BOARD_TOP_MARGIN: 1.2, // 보드 윗변과 방어선 사이에 두는 여유(월드 단위)
+  BOARD_TOP_MARGIN: 1.4, // 보드 윗변과 방어선 사이에 두는 여유(월드 단위)
   BOARD_RATIO_MAX: 0.42, // 보드가 화면을 이보다 더 차지한다고 보지는 않는다(가로 화면 방어)
+  FRAME_MAX_WIDTH: 500, // 폰 칼럼의 최대 폭(px). index.html의 --frame-max와 같아야 한다.
+};
+
+/**
+ * 방어선 연출.
+ * 전장 아래를 가로지르는 시안 띠다. 평소에는 은은히 숨 쉬고,
+ * 적이 넘으면 그 자리에서 붉게 출렁인다. 보스 즉사선도 같은 선을 쓴다.
+ */
+export const DEFENSE = {
+  COLOR: 0x5fe6ff, // 평상시 시안
+  BREACH_COLOR: 0xff4a5e, // 뚫렸을 때의 붉은색
+
+  CORE_HEIGHT: 0.09, // 밝은 심지 두께(월드 단위)
+  GLOW_HEIGHT: 1.05, // 아래위로 번지는 글로우 두께
+  CORE_OPACITY: 0.72,
+  GLOW_OPACITY: 0.22,
+
+  BREATH_PERIOD: 2.6, // 숨 쉬듯 밝기가 오르내리는 주기(초)
+  BREATH_DEPTH: 0.22, // 그 진폭(0~1)
+
+  BREACH_TIME: 0.5, // 붉게 물들었다 돌아오는 시간(초)
+  WOBBLE_AMP: 0.26, // 뚫린 순간 선이 위아래로 출렁이는 폭
+  WOBBLE_FREQ: 30, // 출렁임 주기(라디안/초)
+
+  RIPPLE_SIZE: 3.2, // 뚫린 자리에 번지는 붉은 빛무리 크기
+  RIPPLE_TIME: 0.42,
+  RIPPLE_POOL: 8,
+};
+
+/**
+ * 자동 조준.
+ *
+ * 플레이어는 전장을 만지지 않는다. 기체가 스스로 표적을 고르고 그 밑으로 간다.
+ * 표적은 "방어선에 가장 가까운 적"이 먼저다. 놓치면 아프기 때문이다.
+ * 표적이 자주 바뀌면 기체가 갈팡질팡하므로, 새 표적이 SWITCH_MARGIN만큼
+ * 더 급할 때만 갈아탄다.
+ */
+export const AIM = {
+  MOVE_SPEED: 11, // 목표 x로 따라붙는 감쇠 계수(클수록 빠르다)
+  MAX_ROLL: 0.42, // 따라갈 때 기우는 최대 각도(라디안)
+  ROLL_GAIN: 0.32, // 이동 속도 대비 기울기
+
+  SWITCH_MARGIN: 1.2, // 새 표적이 이만큼 더 아래에 있어야 갈아탄다(월드 단위)
+  LEAD_TIME_MAX: 0.4, // 흔들리는 적을 앞질러 겨누는 시간 상한(초)
+  DEAD_ZONE: 0.05, // 이보다 가까우면 다 맞춘 것으로 보고 멈춘다.
 };
 
 /** 적 공통 연출 */
@@ -115,28 +163,32 @@ export const ENEMY_TYPES = {
  * 웨이브 구성표.
  * 배열 한 칸이 웨이브 하나다. 값은 스테이지 1 기준 적 수이고,
  * 스테이지가 오르면 STAGE.COUNT_PER_STAGE 만큼 불어난다.
+ *
+ * 첫 두 웨이브를 두껍게 잡은 것은 페이싱 때문이다.
+ * 시작 5초 안에 첫 처치, 15초 안에 첫 구매가 되려면 초반부터 적이 끊이지 않아야 한다.
+ * 스테이지 1 전체는 90~120초를 노린다.
  */
 export const WAVE_TABLE = [
-  { INTERCEPTOR: 5 },
-  { INTERCEPTOR: 7 },
-  { INTERCEPTOR: 6, SAUCER: 2 },
-  { INTERCEPTOR: 8, SAUCER: 3 },
-  { INTERCEPTOR: 6, GUNSHIP: 2 },
-  { INTERCEPTOR: 8, SAUCER: 4 },
-  { INTERCEPTOR: 8, GUNSHIP: 2, SAUCER: 3 },
-  { INTERCEPTOR: 10, GUNSHIP: 3 },
-  { INTERCEPTOR: 9, GUNSHIP: 2, SAUCER: 5 },
+  { INTERCEPTOR: 8 },
+  { INTERCEPTOR: 10 },
+  { INTERCEPTOR: 9, SAUCER: 2 },
+  { INTERCEPTOR: 10, SAUCER: 3 },
+  { INTERCEPTOR: 8, GUNSHIP: 2 },
+  { INTERCEPTOR: 10, SAUCER: 4 },
+  { INTERCEPTOR: 9, GUNSHIP: 2, SAUCER: 3 },
+  { INTERCEPTOR: 11, GUNSHIP: 3 },
+  { INTERCEPTOR: 10, GUNSHIP: 2, SAUCER: 5 },
   { INTERCEPTOR: 12, GUNSHIP: 4, SAUCER: 4 },
 ];
 
 /** 웨이브 진행 규칙 */
 export const WAVE = {
-  SPAWN_INTERVAL: 0.55, // 웨이브 안에서 한 기씩 내보내는 간격(초)
-  SPAWN_INTERVAL_MIN: 0.16, // 스테이지가 올라도 이보다 촘촘해지지는 않는다.
-  ALIVE_MAX: 14, // 동시 생존 상한. 넘으면 스폰을 미룬다.
+  SPAWN_INTERVAL: 0.42, // 웨이브 안에서 한 기씩 내보내는 간격(초)
+  SPAWN_INTERVAL_MIN: 0.12, // 스테이지가 올라도 이보다 촘촘해지지는 않는다.
+  ALIVE_MAX: 16, // 동시 생존 상한. 넘으면 스폰을 미룬다.
 
-  REST_TIME: 1.3, // 웨이브를 비우고 다음 웨이브까지 쉬는 시간(초)
-  INTRO_TIME: 1.0, // 웨이브 배너를 띄우는 시간(초)
+  REST_TIME: 0.55, // 웨이브를 비우고 다음 웨이브까지 쉬는 시간(초)
+  INTRO_TIME: 0.7, // 웨이브 배너를 띄우는 시간(초)
 };
 
 /** 스테이지 난이도 배수 */
@@ -188,7 +240,7 @@ export const BOSS = {
   // 스테이지 1 기준 HP. 보드를 알뜰히 키우면 스테이지 1 끝에서 총 공격력 3쯤(초당 30)이 되고,
   // 그 화력으로 15초쯤 걸린다. 보스가 내려오는 27초 안에 잡으려면 보드를 키워야 한다.
   // 이 수치가 "무기를 사야 하는 이유"를 정하는 손잡이다.
-  BASE_HP: 460,
+  BASE_HP: 560,
   HP_PER_STAGE: 0.45, // HP 배수 = 1 + 0.45 × (스테이지 - 1)
 
   SPAWN_Y: 8.2, // 화면 밖 위쪽에서 등장
@@ -244,13 +296,18 @@ export const DEBRIS = {
 export const SCRAP = {
   POOL_SIZE: 96,
 
-  SCATTER_SPEED: 4.2, // 처음 흩어지는 속도
-  SCATTER_TIME: 0.26, // 흩어지는 시간(초). 지나면 자석 시작
-  SCATTER_DRAG: 4.0,
+  SCATTER_SPEED: 3.6, // 처음 흩어지는 속도
+  SCATTER_TIME: 0.16, // 흩어지는 시간(초). 지나면 곧장 기체로 날아온다.
+  SCATTER_DRAG: 5.0,
 
-  MAGNET_ACCEL: 52, // 기체 쪽으로 끌려가는 가속도
-  MAGNET_MAX_SPEED: 30,
-  PICKUP_RADIUS: 0.55, // 흡수 판정 반지름
+  // 자석에는 반경이 없다. 어디서 떨어지든 전부 기체로 온다.
+  // 가속만 주면 접선 속도가 남아 조각이 기체 둘레를 맴돈다. 그래서 가속이 아니라
+  // "가고 싶은 속도"로 방향째 끌어당긴다. 그러면 반드시 수렴한다.
+  MAGNET_SPEED: 15, // 기체 쪽으로 향하는 기준 속도
+  MAGNET_SPEED_GAIN: 1.4, // 멀수록 빨라진다: 속도 = MAGNET_SPEED + 거리 × 이 값
+  MAGNET_MAX_SPEED: 34,
+  MAGNET_TURN: 9, // 지금 속도를 목표 속도로 꺾는 세기(클수록 곧게 온다)
+  PICKUP_RADIUS: 0.7, // 흡수 판정 반지름
 
   SIZE: 0.38,
   COLOR: 0x9dff9a,
@@ -282,8 +339,9 @@ export const WEAPON = {
 
   START_LEVEL: 1, // 판을 시작할 때 공짜로 주는 무기 레벨. 주포가 비는 일을 막는다.
 
-  BUY_COST: 20, // 첫 구매 가격(스크랩)
-  BUY_COST_GROWTH: 1.35, // 살 때마다 곱해지는 배수. 한 판 안에서만 누적된다.
+  // 첫 무기는 싸다. 시작 15초 안에 한 번은 사 봐야 보드가 무엇인지 알게 된다.
+  BUY_COST: 18, // 첫 구매 가격(스크랩)
+  BUY_COST_GROWTH: 1.28, // 살 때마다 곱해지는 배수. 한 판 안에서만 누적된다.
   REFUND_BASE: 8, // 레벨 1 분해 환급
   REFUND_PER_LEVEL: 1.9, // 환급 = REFUND_BASE × 1.9 ^ (레벨 - 1)
 };
