@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Vulcan } from './vulcan.js';
+import { Weapon } from './weapon.js';
 import { EnemyField } from './enemies.js';
 import { Boss } from './boss.js';
 import { DefenseLine } from './defense-line.js';
@@ -8,6 +8,7 @@ import { MergeBoard } from './board.js';
 import { HUD } from './ui.js';
 import { Hangar } from './hangar.js';
 import { PerkState } from './perks.js';
+import { TechState } from './tech.js';
 import { buildWave, stageScales } from './waves.js';
 import {
   AIM,
@@ -18,7 +19,6 @@ import {
   SHIELD,
   STAGE,
   STORAGE_KEYS,
-  VULCAN,
   WAVE,
 } from './tuning.js';
 
@@ -37,7 +37,9 @@ import {
 // 죽으면 격납고가 열린다(hangar.js). 누적 스크랩으로 산 퍽은 판을 시작할 때 한 번 읽어
 // 화력 배수·최대 체력·보호막·시작 무기·정예 보급 확률로 나뉘어 들어간다.
 //
-// 화력의 축은 머지 보드다(board.js). 보드가 정한 총 공격력을 발칸이 그대로 받아 쏜다.
+// 화력의 축은 머지 보드다(board.js). 보드가 정한 총 공격력을 주포가 그대로 받아 쏜다.
+// 그 주포가 무엇인가는 격납고에서 고른 무기 테크가 정한다(tech.js, weapon.js).
+// 레벨 체계는 그대로 두고 탄의 성질만 바뀌므로, 보드와 화력 공식은 테크를 모른다.
 // 스크랩은 두 갈래로 센다. 지갑(wallet)은 무기를 사고 남은 돈이고,
 // 이번 판에 번 총량(runScrap)은 결과 화면과 누적 저장에 쓴다. 쓴 돈을 다시 빼지 않는다.
 //
@@ -77,6 +79,27 @@ function saveNumber(key, value) {
   }
 }
 
+/**
+ * 선분 (x0,y0)→(x1,y1)이 반지름 radius짜리 원과 닿는가.
+ * 원의 중심을 선분에 내린 발이 가장 가까운 점이다. 선분 밖으로 나가면 끝점으로 접는다.
+ * 빠른 탄이 한 프레임에 적을 건너뛰는 일을 이 판정이 막는다.
+ */
+function segmentHitsCircle(center, radius, x0, y0, x1, y1) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = dx * dx + dy * dy;
+
+  let t = 0;
+  if (len > 0) {
+    t = ((center.x - x0) * dx + (center.y - y0) * dy) / len;
+    t = Math.min(Math.max(t, 0), 1);
+  }
+
+  const px = center.x - (x0 + dx * t);
+  const py = center.y - (y0 + dy * t);
+  return px * px + py * py <= radius * radius;
+}
+
 export class Game {
   /**
    * @param {THREE.Scene} scene
@@ -95,7 +118,10 @@ export class Game {
     this.perks = new PerkState();
     this.powerMul = this.perks.effects.powerMul;
 
-    this.vulcan = new Vulcan(scene);
+    // 무기 테크(발칸 → 레이저 → 미사일 → 플라즈마). 이것도 판을 시작할 때 한 번 읽는다.
+    this.tech = new TechState();
+
+    this.weapon = new Weapon(scene);
     this.enemies = new EnemyField(scene, halfWidth);
     this.boss = new Boss(scene);
     this.defenseLine = new DefenseLine(scene, halfWidth);
@@ -119,7 +145,7 @@ export class Game {
     });
 
     // 격납고. 누적 스크랩은 이 게임이 들고 있고, 격납고는 물어보고 시킬 뿐이다.
-    this.hangar = new Hangar(this.perks, {
+    this.hangar = new Hangar(this.perks, this.tech, {
       getTotal: () => this.totalScrap,
       spend: (cost) => this.#spendTotal(cost),
       onLaunch: () => this.#launch(),
@@ -129,6 +155,10 @@ export class Game {
     this.state = STATE.WAVE;
     this.stateTime = 0;
     this.hitStop = 0;
+
+    // 관리자 패널이 만지는 두 손잡이. 평상시에는 이 값 그대로라 일반 플레이에 닿지 않는다.
+    this.timeScale = 1; // 게임 시간 배수(페이싱 검증용)
+    this.godMode = false; // 켜지면 피해와 즉사를 모두 흘려보낸다.
 
     this.stage = 1;
     this.wave = 1;
@@ -163,13 +193,20 @@ export class Game {
 
     this._point = new THREE.Vector3(); // 처치 위치 계산용 임시 벡터
 
+    // 이번 프레임에 죽은 적. 탄 판정이 도는 동안에는 목록을 건드리지 않고 여기에 모아 둔다.
+    // 관통·광역은 한 프레임에 여러 기를 함께 때리므로, 중간에 목록이 줄면 판정이 어긋난다.
+    this._killed = [];
+
+    // 유도탄이 매 프레임 물어보는 표적. 함수를 미리 만들어 두어 프레임마다 새로 짓지 않는다.
+    this._findTarget = (x, y) => this.#nearestTarget(x, y);
+
     // 머지 보드. 재화는 이 게임이 들고 있고, 보드는 물어보고 시킬 뿐이다.
     this.board = new MergeBoard({
       getWallet: () => this.wallet,
       spend: (cost) => this.#spendScrap(cost),
       refund: (amount) => this.#refundScrap(amount),
-      // 보드가 정한 총 공격력에 공격력 퍽 배수를 곱해 발칸에 넘긴다.
-      onPowerChange: (power) => this.vulcan.setPower(power * this.powerMul),
+      // 보드가 정한 총 공격력에 공격력 퍽 배수를 곱해 주포에 넘긴다.
+      onPowerChange: (power) => this.weapon.setPower(power * this.powerMul),
       onMerge: () => this.#onWeaponMerged(),
       getEliteChance: () => this.perks.effects.eliteChance,
     });
@@ -187,7 +224,7 @@ export class Game {
    * 카메라 흔들림처럼 멈추면 안 되는 연출은 실제 dt를 그대로 쓴다.
    */
   gameTime(dt) {
-    if (this.hitStop <= 0) return dt;
+    if (this.hitStop <= 0) return dt * this.timeScale;
     this.hitStop -= dt;
     return 0;
   }
@@ -202,14 +239,14 @@ export class Game {
     this.stateTime += dt;
 
     const combat = COMBAT_STATES.has(this.state);
-    this.vulcan.update(dt, this.ship.muzzles, combat);
+    this.weapon.update(dt, this.ship.muzzles, combat, this._findTarget);
 
     if (combat) {
       if (this.shieldGrace > 0) this.shieldGrace -= dt;
 
       this.enemies.update(dt);
       this.#updateAim();
-      this.#resolveBullets(dt);
+      this.#resolveBullets();
       this.#resolveBreach();
       this.#resolveCollisions();
     }
@@ -312,9 +349,36 @@ export class Game {
     // 흔들리며 내려오는 적은 앞질러 겨눈다. 탄이 닿을 때쯤의 자리를 본다.
     const muzzleY = this.ship.mesh.position.y + 1.95;
     const travel = Math.max(best.group.position.y - muzzleY, 0);
-    const lead = Math.min(travel / VULCAN.BULLET_SPEED, AIM.LEAD_TIME_MAX);
+    const lead = Math.min(travel / this.weapon.speed, AIM.LEAD_TIME_MAX);
 
     this.ship.setAim(best.group.position.x + best.vx * lead);
+  }
+
+  /**
+   * 유도탄이 부르는 "여기서 가장 가까운 표적".
+   * 표적을 붙잡아 두지 않고 매 프레임 다시 묻는다. 그래야 표적이 터져도 참조가 남지 않는다.
+   * @returns {{x: number, y: number}|null}
+   */
+  #nearestTarget(x, y) {
+    if (this.boss.alive) return this.boss.position;
+
+    let best = null;
+    let bestDist = Infinity;
+
+    for (const e of this.enemies.active) {
+      if (e.hp <= 0) continue;
+
+      const dx = e.group.position.x - x;
+      const dy = e.group.position.y - y;
+      const dist = dx * dx + dy * dy;
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = e.group.position;
+      }
+    }
+
+    return best;
   }
 
   // --- 판 진행 -------------------------------------------------------------
@@ -322,11 +386,16 @@ export class Game {
   /**
    * 새 판을 시작한다. 첫 실행과 격납고의 [출격]이 함께 쓴다.
    *
-   * 퍽은 여기서 딱 한 번 읽는다. 판이 도는 동안에는 바뀌지 않는다.
+   * 퍽과 무기 테크는 여기서 딱 한 번 읽는다. 판이 도는 동안에는 바뀌지 않는다.
    * 격납고는 죽어야 열리기 때문이다.
    */
   startRun() {
     const perks = this.perks.effects;
+
+    // 테크는 전역 설정이다. 주포와 보드 실루엣이 함께 갈아 끼워진다.
+    const techId = this.tech.current.ID;
+    this.weapon.setTech(techId);
+    this.board.setTech(techId);
 
     this.powerMul = perks.powerMul;
     this.maxHp = perks.maxHp;
@@ -537,9 +606,13 @@ export class Game {
     this.#startStage();
   }
 
-  /** 기체 격추. 폭발 연출을 깔고 결과 화면으로 넘어갈 준비를 한다. */
-  #killPlayer() {
+  /**
+   * 기체 격추. 폭발 연출을 깔고 결과 화면으로 넘어갈 준비를 한다.
+   * @param {boolean} [force] 무적을 무시하고 죽인다. 관리자 패널의 [즉시 사망]만 쓴다.
+   */
+  #killPlayer(force = false) {
     if (this.ship.destroyed) return;
+    if (this.godMode && !force) return;
 
     const p = this.ship.mesh.position;
     this.diedDuringBoss = this.state === STATE.BOSS || this.state === STATE.BOSS_WARNING;
@@ -587,25 +660,44 @@ export class Game {
 
   /**
    * 탄환과 적/보스의 충돌.
+   *
    * 탄이 한 프레임에 판정 반지름보다 멀리 날아가면 뚫고 지나가 버리므로,
-   * 점이 아니라 "이번 프레임에 지나온 세로 선분"으로 재 준다.
+   * 점이 아니라 "이번 프레임에 지나온 선분"으로 잰다. 유도탄처럼 비스듬히 나는
+   * 탄도 있어서 세로 선분이 아니라 실제 자취를 그대로 쓴다(weapon.js가 px·py에 남겨 둔다).
+   *
+   * 테크에 따라 갈리는 것은 셋이다.
+   *   관통(레이저)  탄을 회수하지 않고, 이미 때린 적은 명부로 걸러 두 번 아프게 하지 않는다.
+   *   광역(미사일·플라즈마)  맞은 자리 둘레의 적에게도 몫을 나눈다.
+   *   그 밖(발칸)  탄 하나가 적 하나만 때린다.
+   *
+   * 죽은 적은 곧바로 치우지 않고 모아 둔다. 관통·광역은 한 프레임에 여러 기를 함께
+   * 때리는데, 도중에 목록이 줄면 남은 판정이 엉뚱한 적을 건너뛰기 때문이다.
    */
-  #resolveBullets(dt) {
-    const step = VULCAN.BULLET_SPEED * dt;
+  #resolveBullets() {
+    const weapon = this.weapon;
+    const pierce = weapon.pierces;
+    const splash = weapon.splash;
+    const killed = this._killed;
+    killed.length = 0;
 
-    for (const b of this.vulcan.bullets) {
+    for (const b of weapon.bullets) {
       if (b.life <= 0) continue;
 
-      const bx = b.group.position.x;
-      const byTop = b.group.position.y;
-      const byBottom = byTop - step;
+      const x1 = b.group.position.x;
+      const y1 = b.group.position.y;
 
       // 보스가 떠 있으면 먼저 본다. 화면 위쪽을 통째로 막고 있기 때문이다.
-      if (this.boss.alive && this.#segmentHits(this.boss.position, BOSS.HIT_RADIUS, bx, byBottom, byTop)) {
-        this.vulcan.recycle(b);
+      if (
+        this.boss.alive &&
+        !b.hits?.has(this.boss) &&
+        segmentHitsCircle(this.boss.position, BOSS.HIT_RADIUS, b.px, b.py, x1, y1)
+      ) {
+        b.hits?.add(this.boss); // 관통탄이 같은 보스를 다단으로 때리지 않게 한다.
+        if (!pierce) weapon.recycle(b);
+        weapon.impactAt(x1, y1);
         this.cameraFX.shake(BOSS.HIT_SHAKE_STRENGTH, BOSS.HIT_SHAKE_TIME);
 
-        if (this.boss.hit(this.vulcan.damage, bx, byTop)) {
+        if (this.boss.hit(weapon.damage, x1, y1)) {
           this.#onBossDefeated();
           return; // 보스가 터졌으면 이번 프레임 판정은 여기서 끝낸다.
         }
@@ -614,26 +706,54 @@ export class Game {
 
       for (let i = this.enemies.active.length - 1; i >= 0; i--) {
         const e = this.enemies.active[i];
-        if (!this.#segmentHits(e.group.position, e.def.HIT_RADIUS, bx, byBottom, byTop)) continue;
+        if (e.hp <= 0 || b.hits?.has(e)) continue; // 이미 이번 프레임에 죽었거나 때린 적
+        if (!segmentHitsCircle(e.group.position, e.def.HIT_RADIUS, b.px, b.py, x1, y1)) continue;
 
-        this.vulcan.recycle(b);
+        b.hits?.add(e);
+        if (!pierce) weapon.recycle(b);
 
-        if (this.enemies.hit(e, this.vulcan.damage)) {
-          this._point.copy(e.group.position);
-          const def = e.def;
-          this.enemies.release(e);
-          this.#onEnemyKilled(this._point, def);
-        }
-        break; // 탄 하나는 적 하나만 때린다.
+        // 연출은 탄이 멈춘 자리가 아니라 맞은 적 위에 얹는다.
+        // 폭발과 링이 곧 "여기까지 아프다"는 표시이기 때문이다.
+        const hx = e.group.position.x;
+        const hy = e.group.position.y;
+        weapon.impactAt(hx, hy);
+
+        if (this.enemies.hit(e, weapon.damage)) killed.push(e);
+        if (splash) this.#splash(hx, hy, splash, e, killed);
+
+        if (!pierce) break; // 탄 하나가 적 하나만 때린다.
       }
     }
+
+    // 이제야 치운다. 판정이 다 끝났으므로 목록이 줄어도 어긋날 곳이 없다.
+    for (const e of killed) {
+      this._point.copy(e.group.position);
+      const def = e.def;
+      this.enemies.release(e);
+      this.#onEnemyKilled(this._point, def);
+    }
+    killed.length = 0;
   }
 
-  /** 세로 선분(byBottom~byTop, x=bx)이 반지름 r짜리 원과 닿는가. */
-  #segmentHits(center, radius, bx, byBottom, byTop) {
-    const dx = center.x - bx;
-    const dy = center.y - Math.min(Math.max(center.y, byBottom), byTop);
-    return dx * dx + dy * dy <= radius * radius;
+  /**
+   * 광역 피해. 맞은 적을 뺀 반경 안의 적 전원이 몫만큼 아프다.
+   * @param {object} splash 테크의 SPLASH 정의(RADIUS·RATIO)
+   * @param {object} exclude 직격을 이미 받은 적
+   * @param {object[]} killed 이번 프레임에 죽은 적을 모으는 자리
+   */
+  #splash(x, y, splash, exclude, killed) {
+    const reach = splash.RADIUS * splash.RADIUS;
+    const damage = this.weapon.damage * splash.RATIO;
+
+    for (const e of this.enemies.active) {
+      if (e === exclude || e.hp <= 0) continue;
+
+      const dx = e.group.position.x - x;
+      const dy = e.group.position.y - y;
+      if (dx * dx + dy * dy > reach) continue;
+
+      if (this.enemies.hit(e, damage)) killed.push(e);
+    }
   }
 
   /** 방어선 통과: 놓친 적이 아래로 빠져나가며 체력을 깎는다. */
@@ -689,7 +809,7 @@ export class Game {
    * @param {number} y
    */
   #hurtPlayer(amount, grantInvuln, x = 0, y = FIELD.DEFENSE_LINE_Y) {
-    if (this.ship.destroyed) return;
+    if (this.ship.destroyed || this.godMode) return;
 
     // 방금 깨진 보호막이 아직 막고 있다. 이 몫은 이미 값을 치렀다.
     if (this.shieldGrace > 0) return;
@@ -811,6 +931,89 @@ export class Game {
     saveNumber(STORAGE_KEYS.BEST_WAVE, wave);
   }
 
+  // --- 관리자 패널이 쓰는 좁은 창구 -----------------------------------------
+
+  /**
+   * 개발용 조작 창구. `?dev`로 열리는 관리자 패널(dev-panel.js)만 이 객체를 쓴다.
+   *
+   * 패널이 게임 속을 직접 헤집지 않도록 필요한 만큼만 열어 둔다.
+   * 여기 없는 것은 패널도 만질 수 없다. 일반 플레이 경로는 이 창구를 지나지 않는다.
+   */
+  get devApi() {
+    return {
+      /** 지갑에 스크랩을 얹는다(인게임). */
+      addWallet: (amount) => {
+        this.wallet += amount;
+        this.hud.setScrap(this.wallet);
+        this.board.refreshWallet();
+      },
+
+      /** 누적 스크랩을 얹고 곧바로 저장한다(아웃게임). */
+      addTotalScrap: (amount) => {
+        this.totalScrap += amount;
+        saveNumber(STORAGE_KEYS.TOTAL_SCRAP, this.totalScrap);
+      },
+
+      /** 지금 웨이브를 비운다. 남은 스폰 대기열까지 걷어 곧바로 다음으로 넘어간다. */
+      clearWave: () => {
+        if (!COMBAT_STATES.has(this.state)) return;
+        this.waveQueue.length = 0;
+        this.enemies.reset();
+        this.aimTarget = null;
+      },
+
+      /** 웨이브를 건너뛰고 곧장 보스전으로 간다. */
+      spawnBoss: () => {
+        if (!COMBAT_STATES.has(this.state) || this.boss.alive) return;
+        this.waveQueue.length = 0;
+        this.enemies.reset();
+        this.aimTarget = null;
+        this.wave = STAGE.WAVES_PER_STAGE;
+        this.#startBossWarning();
+      },
+
+      /** 스테이지를 한 칸 올리고 처음부터 다시 깐다. */
+      nextStage: () => {
+        this.stage += 1;
+        this.#clearField();
+        this.hud.hideScreens();
+        this.#startStage();
+      },
+
+      /** 무적 토글. @returns {boolean} 켜졌는지 */
+      toggleGodMode: () => {
+        this.godMode = !this.godMode;
+        return this.godMode;
+      },
+
+      /** 게임 시간 배수. 페이싱을 빠르게 훑어볼 때 쓴다. */
+      setTimeScale: (scale) => {
+        this.timeScale = scale;
+      },
+
+      // 무적을 무시하고 죽인다. 사망 흐름을 확인할 때 쓴다.
+      // 무적 값 자체는 건드리지 않는다. 패널의 표시와 실제가 어긋나면 안 되기 때문이다.
+      killPlayer: () => this.#killPlayer(true),
+
+      /** 무기 테크를 전부 연다. 장착은 격납고에서 고른다. */
+      unlockAllTech: () => this.tech.unlockAll(),
+
+      /** 저장을 통째로 지운다. 검증용으로 부풀린 값을 되돌릴 때 쓴다. */
+      resetSave: () => {
+        for (const key of Object.values(STORAGE_KEYS)) {
+          try {
+            localStorage.removeItem(key);
+          } catch {
+            /* 지울 수 없어도 새로고침은 한다. */
+          }
+        }
+      },
+
+      /** 패널이 켜질 때 지금 상태를 읽어 표시에 반영한다. */
+      readState: () => ({ godMode: this.godMode, timeScale: this.timeScale }),
+    };
+  }
+
   // --- 정리 ---------------------------------------------------------------
 
   #setState(state) {
@@ -820,7 +1023,7 @@ export class Game {
 
   /** 화면에 남은 탄·적·파편·스크랩·보스를 전부 거둔다. 상태 전환마다 잔상이 남지 않게. */
   #clearField() {
-    this.vulcan.reset();
+    this.weapon.reset();
     this.enemies.reset();
     this.debris.reset();
     this.scrap.reset();
@@ -832,6 +1035,7 @@ export class Game {
     this.hitStop = 0;
     this.waveQueue.length = 0;
     this.aimTarget = null;
+    this._killed.length = 0;
 
     this.hud.hideBanner();
     this.hud.showBossHp(false);

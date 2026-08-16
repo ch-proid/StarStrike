@@ -1,4 +1,5 @@
-import { BOARD, WEAPON } from './tuning.js';
+import { BOARD, WEAPON, WEAPON_TECH } from './tuning.js';
+import { tierOf, weaponSvg } from './weapon-icons.js';
 
 // 머지 보드: 화면 아래쪽에 깔린 무기 합성 판.
 //
@@ -11,8 +12,9 @@ import { BOARD, WEAPON } from './tuning.js';
 // 대신 재화는 건드리지 않는다. 스크랩 지갑은 game.js가 들고, 여기서는 물어보고 시킬 뿐이다.
 //
 // 보이는 규칙
-//   칸에는 숫자가 아니라 발칸 실루엣이 놓인다. 무기 칸이 무기로 보여야 하기 때문이다.
-//   레벨 구간이 오를수록 총열이 늘고 몸집이 커지고 색이 옮겨 간다. 레벨 숫자는 구석의 작은 배지다.
+//   칸에는 숫자가 아니라 무기 실루엣이 놓인다. 무기 칸이 무기로 보여야 하기 때문이다.
+//   모양은 격납고에서 고른 테크를 따르고(weapon-icons.js), 레벨 구간이 오를수록
+//   발사구가 늘고 몸집이 커지고 색이 옮겨 간다. 레벨 숫자는 구석의 작은 배지다.
 //   지금 나가고 있는 주포만 테두리가 은은히 빛난다.
 //   무기를 집어 들면 합성되는 칸들이 함께 빛나, 어디에 놓으면 되는지 말없이 알려 준다.
 
@@ -24,41 +26,6 @@ export function weaponPower(level) {
 /** 분해할 때 돌려받는 스크랩. */
 export function refundOf(level) {
   return Math.round(WEAPON.REFUND_BASE * Math.pow(WEAPON.REFUND_PER_LEVEL, level - 1));
-}
-
-/** 레벨 구간(1~3, 4~6, 7~9, 10~). 실루엣의 총열 수와 크기를 정한다. */
-function tierOf(level) {
-  return Math.min(Math.ceil(level / 3), 4);
-}
-
-/** 몸통과 손잡이. 어떤 구간에서나 같다. */
-const BODY = '<path d="M6.2 13.2h11.6l1.5 5.1a1.5 1.5 0 0 1-1.44 1.92H6.14A1.5 1.5 0 0 1 4.7 18.3z"/>';
-
-/** 구간별 총열 묶음. 1총열 → 2총열 → 3총열 → 3총열 + 측면 날개. */
-const BARRELS = [
-  '<rect x="10.5" y="3" width="3" height="11" rx="1.2"/>' +
-    '<rect x="8.4" y="4.6" width="7.2" height="1.7" rx=".85"/>',
-
-  '<rect x="8.9" y="3.4" width="2.4" height="10.6" rx="1"/>' +
-    '<rect x="12.7" y="3.4" width="2.4" height="10.6" rx="1"/>' +
-    '<rect x="7.6" y="5" width="8.8" height="1.7" rx=".85"/>',
-
-  '<rect x="7.3" y="4" width="2.2" height="10" rx="1"/>' +
-    '<rect x="10.9" y="2.8" width="2.2" height="11.2" rx="1"/>' +
-    '<rect x="14.5" y="4" width="2.2" height="10" rx="1"/>' +
-    '<rect x="6.6" y="5.6" width="10.8" height="1.7" rx=".85"/>',
-
-  '<rect x="7.3" y="4" width="2.2" height="10" rx="1"/>' +
-    '<rect x="10.9" y="2.2" width="2.2" height="11.8" rx="1"/>' +
-    '<rect x="14.5" y="4" width="2.2" height="10" rx="1"/>' +
-    '<rect x="6.6" y="5.6" width="10.8" height="1.7" rx=".85"/>' +
-    '<path d="M4.9 12.6 1.8 15.4v3.1l3.4-2.4z"/>' +
-    '<path d="M19.1 12.6l3.1 2.8v3.1l-3.4-2.4z"/>',
-];
-
-/** 발칸 실루엣 한 벌. 외부 이미지 없이 인라인 SVG로만 그린다. */
-function weaponSvg(level) {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${BARRELS[tierOf(level) - 1]}${BODY}</svg>`;
 }
 
 function contains(rect, x, y) {
@@ -88,6 +55,9 @@ export class MergeBoard {
     /** @type {number[]} 칸마다 무기 레벨. 0이면 빈 칸이다. */
     this.slots = new Array(this.size).fill(0);
     this.purchases = 0; // 이번 판에 산 횟수. 가격이 여기에 매여 있다.
+
+    // 지금 장착한 무기 테크. 실루엣만 바뀌고 레벨 체계는 그대로다.
+    this.techId = WEAPON_TECH[0].ID;
 
     this.grid = document.getElementById('board-grid');
     this.trash = document.getElementById('board-trash');
@@ -163,6 +133,21 @@ export class MergeBoard {
   }
 
   // --- 판 시작 -------------------------------------------------------------
+
+  /**
+   * 무기 테크를 갈아 끼운다. 판을 시작할 때 game.js가 부른다.
+   * 칸마다 실루엣이 통째로 바뀌므로 타일을 다시 그린다. 레벨과 색 규칙은 그대로다.
+   */
+  setTech(id) {
+    if (this.techId === id) return;
+
+    this.techId = id;
+    for (const cell of this.cells) {
+      const tile = cell.firstElementChild;
+      if (tile) delete tile.dataset.level; // 다시 그리라는 표시
+    }
+    this.#render();
+  }
 
   /**
    * 새 판. 보드를 비우고 가격을 되돌린 뒤 시작 무기를 한 개 준다.
@@ -247,7 +232,7 @@ export class MergeBoard {
     if (tile.dataset.level !== String(level)) {
       tile.dataset.level = String(level);
       tile.dataset.tier = String(tierOf(level));
-      tile.innerHTML = `${weaponSvg(level)}<span class="lv">${level}</span>`;
+      tile.innerHTML = `${weaponSvg(this.techId, level)}<span class="lv">${level}</span>`;
     }
   }
 

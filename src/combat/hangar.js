@@ -1,13 +1,19 @@
-import { PERKS } from './tuning.js';
+import { PERKS, WEAPON_TECH } from './tuning.js';
 import { perkValue } from './perks.js';
+import { techIconSvg } from './weapon-icons.js';
 
 // 격납고: 죽어야 열리는 상점.
 //
 // 사망 결과 화면의 [격납고]가 이 화면을 열고, [출격]이 스테이지 1부터 새 판을 연다.
 // 죽음이 곧 상점 입장이라는 리듬이 로그라이트의 보상 고리다.
 //
-// 이 파일은 그리기와 누르기만 맡는다. 퍽 레벨은 perks.js가, 누적 스크랩은 game.js가 들고 있다.
-// 여기서는 물어보고 시킬 뿐이다.
+// 파는 것은 두 결이다.
+//   무기: 발칸 → 레이저 → 미사일 → 플라즈마. 순서대로 열고, 연 것 중 하나를 장착한다.
+//   강화: 수치 퍽 다섯. 살수록 레벨이 오른다.
+// 그래서 위는 가로로 넉 장, 아래는 세로로 다섯 줄이다. 모양이 다르면 결도 다르게 읽힌다.
+//
+// 이 파일은 그리기와 누르기만 맡는다. 퍽 레벨은 perks.js가, 테크는 tech.js가,
+// 누적 스크랩은 game.js가 들고 있다. 여기서는 물어보고 시킬 뿐이다.
 //
 // 보이는 규칙은 보드와 같다. 설명 문장을 두지 않고 수치로 말한다.
 // 채워진 시안 버튼은 [출격] 하나뿐이고, 카드의 가격 버튼은 테두리형이라 위계가 갈린다.
@@ -55,28 +61,40 @@ function svg(body) {
 export class Hangar {
   /**
    * @param {import('./perks.js').PerkState} perks
+   * @param {import('./tech.js').TechState} tech
    * @param {object} handlers
    * @param {() => number} handlers.getTotal 지금 쓸 수 있는 누적 스크랩
    * @param {(cost: number) => boolean} handlers.spend 차감 요청. 모자라면 false
    * @param {() => void} handlers.onLaunch [출격]
    */
-  constructor(perks, { getTotal, spend, onLaunch }) {
+  constructor(perks, tech, { getTotal, spend, onLaunch }) {
     this.perks = perks;
+    this.tech = tech;
     this.getTotal = getTotal;
     this.spend = spend;
 
     this.screen = document.getElementById('screen-hangar');
     this.totalEl = document.getElementById('hangar-total');
     this.list = document.getElementById('perk-list');
+    this.techList = document.getElementById('tech-list');
 
     /** @type {Record<string, {card: HTMLElement, dots: HTMLElement[], value: HTMLElement, buy: HTMLElement}>} */
     this.cards = {};
+    /** @type {Record<string, {card: HTMLElement, state: HTMLElement}>} */
+    this.techCards = {};
 
     this.#build();
+    this.#buildTech();
 
     this.list?.addEventListener('click', (e) => {
       const btn = e.target.closest?.('.perk-buy');
       if (btn && !btn.disabled) this.#buy(btn.dataset.id);
+    });
+
+    // 테크 카드는 카드 전체가 버튼이다. 연 것이면 장착, 다음 차례면 해금 + 장착.
+    this.techList?.addEventListener('click', (e) => {
+      const card = e.target.closest?.('.tech');
+      if (card) this.#tapTech(card.dataset.id);
     });
 
     document.getElementById('btn-launch')?.addEventListener('click', onLaunch);
@@ -117,6 +135,26 @@ export class Hangar {
     }
   }
 
+  /** 테크 카드 넉 장. 가로로 나란히 놓여 퍽 목록과 결이 갈린다. */
+  #buildTech() {
+    if (!this.techList) return;
+
+    for (const tech of WEAPON_TECH) {
+      const card = document.createElement('button');
+      card.className = 'tech';
+      card.type = 'button';
+      card.dataset.id = tech.ID;
+
+      card.innerHTML =
+        `<span class="tech-icon">${techIconSvg(tech.ID)}</span>` +
+        `<span class="tech-name">${tech.NAME}</span>` +
+        '<span class="tech-state"></span>';
+
+      this.techList.appendChild(card);
+      this.techCards[tech.ID] = { card, state: card.querySelector('.tech-state') };
+    }
+  }
+
   // --- 여닫기 --------------------------------------------------------------
 
   open() {
@@ -146,9 +184,29 @@ export class Hangar {
     this.#flash(id);
   }
 
+  /**
+   * 테크 카드를 눌렀을 때.
+   * 이미 연 것이면 곧바로 장착하고, 바로 다음 차례면 값을 치르고 열어 그대로 장착한다.
+   * 순서를 건너뛴 카드와 돈이 모자란 카드는 아무 일도 하지 않는다. 까닭은 적지 않는다.
+   */
+  #tapTech(id) {
+    if (!id || this.tech.isEquipped(id)) return;
+
+    if (this.tech.isUnlocked(id)) {
+      this.tech.equip(id);
+    } else {
+      if (!this.tech.isNext(id)) return;
+      if (!this.spend(this.tech.costOf(id))) return;
+      this.tech.unlock(id);
+    }
+
+    this.#refresh();
+    this.#flash(id, this.techCards[id]?.card);
+  }
+
   /** 산 카드가 한 번 번쩍인다. 보드의 합성 연출과 같은 되감기 수법을 쓴다. */
-  #flash(id) {
-    const card = this.cards[id]?.card;
+  #flash(id, target = null) {
+    const card = target ?? this.cards[id]?.card;
     if (!card) return;
 
     card.classList.remove('bought');
@@ -161,6 +219,8 @@ export class Hangar {
   #refresh() {
     const total = this.getTotal();
     if (this.totalEl) this.totalEl.textContent = String(total);
+
+    this.#refreshTech(total);
 
     for (const perk of PERKS) {
       const ui = this.cards[perk.ID];
@@ -187,6 +247,35 @@ export class Hangar {
         ui.buy.innerHTML = `${SCRAP_ICON}<span>${cost}</span>`;
         ui.buy.disabled = total < cost;
         ui.buy.classList.remove('maxed');
+      }
+    }
+  }
+
+  /**
+   * 테크 카드의 상태 셋.
+   *   장착 중 - 시안 테두리가 빛나고 아래에 점이 켜진다.
+   *   해금됨 - 만질 수 있고, 누르면 장착된다.
+   *   잠김   - 가격이 뜬다. 바로 다음 차례가 아니면 흐리게 잠긴다.
+   */
+  #refreshTech(total) {
+    for (const tech of WEAPON_TECH) {
+      const ui = this.techCards[tech.ID];
+      if (!ui) continue;
+
+      const unlocked = this.tech.isUnlocked(tech.ID);
+      const equipped = this.tech.isEquipped(tech.ID);
+      const next = this.tech.isNext(tech.ID);
+      const affordable = next && total >= tech.COST;
+
+      ui.card.classList.toggle('equipped', equipped);
+      ui.card.classList.toggle('locked', !unlocked);
+      ui.card.classList.toggle('ready', affordable); // 지금 살 수 있는 것만 값이 또렷하다
+      ui.card.disabled = !unlocked && !affordable;
+
+      if (unlocked) {
+        ui.state.innerHTML = '<i class="on"></i>';
+      } else {
+        ui.state.innerHTML = `${SCRAP_ICON}<span>${tech.COST}</span>`;
       }
     }
   }

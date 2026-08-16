@@ -531,6 +531,123 @@
         font-weight: 800;
       }
 
+      /* 구획 이름. 문장이 아니라 낱말 하나다. 무기와 강화는 결이 다르므로 나눠 준다. */
+      .panel .sect {
+        display: block;
+        margin: 0 2px 6px;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: var(--track-wide);
+        color: var(--text-dim);
+        text-align: left;
+        opacity: 0.75;
+      }
+
+      .panel .sect + #perk-list,
+      .panel .sect + #tech-list {
+        margin-bottom: 14px;
+      }
+
+      /* --- 무기 테크: 가로로 넉 장. 퍽 목록과 모양이 달라 결이 갈린다. --- */
+
+      #tech-list {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+      }
+
+      .tech {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 9px 3px 7px;
+        border: 0;
+        border-radius: var(--r-sm);
+        font-family: inherit;
+        background: var(--bg-chip);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        color: var(--text-dim);
+        cursor: pointer;
+        transition:
+          box-shadow 0.16s,
+          color 0.16s,
+          opacity 0.16s;
+      }
+
+      .tech svg {
+        width: 28px;
+        height: 28px;
+        fill: currentColor;
+      }
+
+      .tech-name {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .tech-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        min-height: 12px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0;
+        color: var(--money);
+      }
+
+      .tech-state svg {
+        width: 8px;
+        height: 8px;
+        opacity: 0.85;
+      }
+
+      /* 연 무기는 값 대신 점 하나. 장착 중일 때만 그 점이 켜진다. */
+      .tech-state .on {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.16);
+      }
+
+      /* 장착 중: 화면에서 이 카드만 시안으로 빛난다. */
+      .tech.equipped {
+        color: var(--accent);
+        background: var(--accent-soft);
+        box-shadow:
+          inset 0 0 0 1.5px var(--accent),
+          0 0 14px var(--accent-soft);
+      }
+
+      .tech.equipped .tech-state .on {
+        background: var(--accent);
+        box-shadow: 0 0 6px var(--accent);
+      }
+
+      /* 잠김: 흐릴 뿐 까닭을 적지 않는다. 바로 다음 차례만 값이 또렷하다. */
+      .tech.locked {
+        opacity: 0.4;
+      }
+
+      .tech.locked.ready {
+        opacity: 1;
+        box-shadow: inset 0 0 0 1px rgba(125, 251, 155, 0.32);
+      }
+
+      .tech:active {
+        transform: translateY(1px);
+      }
+
+      .tech[disabled] {
+        cursor: default;
+        transform: none;
+      }
+
       #perk-list {
         display: flex;
         flex-direction: column;
@@ -680,7 +797,8 @@
       }
 
       /* 산 순간 카드가 한 번 번쩍인다. 보드의 합성 번쩍임과 같은 결이다. */
-      .perk.bought::after {
+      .perk.bought::after,
+      .tech.bought::after {
         content: '';
         position: absolute;
         inset: -3px;
@@ -1140,7 +1258,13 @@
             </svg>
             <b id="hangar-total">0</b>
           </p>
+          <!-- 무기 테크: 순서대로 해금하고, 연 것 중 하나를 장착한다. hangar.js가 만들어 넣는다. -->
+          <span class="sect">무기</span>
+          <div id="tech-list"></div>
+
+          <span class="sect">강화</span>
           <div id="perk-list"></div>
+
           <button id="btn-launch" class="btn-primary" type="button">출격</button>
         </div>
       </div>

@@ -159,6 +159,12 @@ const ship = new Ship(scene, visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
 // 코어 루프: 웨이브 → 보스 → 스테이지 클리어 / 사망 → 재도전
 const game = new Game(scene, ship, cameraFX, visibleHalfWidth, { project });
 
+// 관리자 패널: 주소에 ?dev가 붙었을 때만 불러온다.
+// 동적 import라 평상시에는 코드가 내려오지도, 돌지도 않는다.
+if (new URLSearchParams(location.search).has('dev')) {
+  import('./combat/dev-panel.js').then(({ mountDevPanel }) => mountDevPanel(game.devApi));
+}
+
 // --- 리사이즈 대응 ---
 //
 // 창 크기뿐 아니라 주소창이 접히며 프레임 높이가 바뀌는 경우도 잡아야 한다.

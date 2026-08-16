@@ -68,6 +68,85 @@ export class FlashPool {
   }
 }
 
+// --- 퍼져 나가는 고리 풀 ---
+
+/**
+ * 명중 자리에서 바깥으로 번지는 얇은 고리. 플라즈마의 광역 폭발이 쓴다.
+ * "여기까지 피해가 닿았다"를 반지름 하나로 말해 준다.
+ *
+ * 수명 동안 흐려져야 하므로 재질을 개체마다 따로 둔다. 대신 지오메트리는
+ * 반지름 1짜리 고리 하나를 공유하고, 퍼지는 정도는 scale로만 준다.
+ */
+export class RingPool {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {{color: number, radius: number, life: number, count: number,
+   *          intensity?: number}} opts radius는 다 퍼졌을 때의 반지름이다.
+   */
+  constructor(scene, { color, radius, life, count, intensity = 1.9 }) {
+    this.radius = radius;
+    this.life = life;
+    this.items = [];
+
+    const g = geo('fx.ring', () => new THREE.RingGeometry(0.88, 1, 40));
+
+    for (let i = 0; i < count; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color,
+        toneMapped: false,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      material.color.multiplyScalar(intensity); // 블룸 임계값을 확실히 넘긴다.
+
+      const mesh = new THREE.Mesh(g, material);
+      mesh.visible = false;
+      mesh.renderOrder = 3;
+      scene.add(mesh);
+
+      this.items.push({ mesh, material, time: 0 });
+    }
+    this.cursor = 0;
+  }
+
+  spawn(x, y, z) {
+    const item = this.items[this.cursor];
+    this.cursor = (this.cursor + 1) % this.items.length;
+
+    item.time = this.life;
+    item.mesh.position.set(x, y, z);
+    item.mesh.scale.setScalar(this.radius * 0.25);
+    item.material.opacity = 1;
+    item.mesh.visible = true;
+  }
+
+  update(dt) {
+    for (const item of this.items) {
+      if (item.time <= 0) continue;
+
+      item.time -= dt;
+      if (item.time <= 0) {
+        item.mesh.visible = false;
+        continue;
+      }
+
+      const t = 1 - item.time / this.life; // 0 → 1
+      item.mesh.scale.setScalar(this.radius * (0.25 + t * 0.85));
+      item.material.opacity = 1 - t * t;
+    }
+  }
+
+  reset() {
+    for (const item of this.items) {
+      item.time = 0;
+      item.mesh.visible = false;
+    }
+  }
+}
+
 // --- 보호막 파열 ---
 
 /**
