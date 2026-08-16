@@ -16,6 +16,15 @@ export class CameraFX {
     this.followLerpSpeed = 3;
   }
 
+  /**
+   * 기준 위치를 갈아 끼운다. 머지 보드 높이에 맞춰 화면 구성을 다시 잡을 때 쓴다.
+   * 흔들리는 도중이라도 다음 프레임부터 새 자리를 기준으로 삼는다.
+   */
+  setBase(position) {
+    this.basePosition.copy(position);
+    this.followTarget.copy(position);
+  }
+
   // 흔들림 시작. strength: 흔들림 세기, duration: 지속 시간(초)
   shake(strength = 0.4, duration = 0.3) {
     this.shakeStrength = strength;

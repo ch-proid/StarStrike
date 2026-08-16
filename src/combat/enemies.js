@@ -105,7 +105,8 @@ export class EnemyField {
     const def = e.def;
 
     e.active = true;
-    e.hp = Math.round(def.HP * this.hpScale);
+    // HP는 반올림하지 않는다. 탄 한 발의 대미지가 화력에 따라 실수로 오르내리기 때문이다.
+    e.hp = def.HP * this.hpScale;
     e.speed =
       (def.SPEED_MIN + Math.random() * (def.SPEED_MAX - def.SPEED_MIN)) * this.speedScale;
     e.flash = 0;

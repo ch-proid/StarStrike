@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { Vulcan } from './vulcan.js';
 import { EnemyField } from './enemies.js';
 import { Boss } from './boss.js';
-import { DebrisField, ScrapField } from './effects.js';
+import { DebrisField, FlashPool, ScrapField } from './effects.js';
+import { MergeBoard } from './board.js';
 import { HUD } from './ui.js';
 import { buildWave, stageScales } from './waves.js';
 import { BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from './tuning.js';
@@ -14,6 +15,10 @@ import { BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from './t
 //
 // 압박의 축은 방어선이다. 적을 못 잡으면 화면 아래를 통과하며 체력을 깎고,
 // 보스는 방어선에 닿는 순간 기체를 깔아뭉갠다. 그래서 보스전은 체력전이 아니라 시간전이다.
+//
+// 화력의 축은 머지 보드다(board.js). 보드가 정한 총 공격력을 발칸이 그대로 받아 쏜다.
+// 스크랩은 두 갈래로 센다. 지갑(wallet)은 무기를 사고 남은 돈이고,
+// 이번 판에 번 총량(runScrap)은 결과 화면과 누적 저장에 쓴다. 쓴 돈을 다시 빼지 않는다.
 //
 // 진행 규칙 수치는 tuning.js, 웨이브 구성 계산은 waves.js, 화면 표시는 ui.js가 맡는다.
 // 이 파일은 그 셋을 이어 붙이는 상태 기계다.
@@ -71,6 +76,16 @@ export class Game {
     this.debris = new DebrisField(scene);
     this.scrap = new ScrapField(scene, () => this.#collectScrap());
 
+    // 합성 순간 기체 둘레에서 터지는 빛무리
+    this.powerBurst = new FlashPool(scene, {
+      color: 0xbdf1ff,
+      size: PLAYER.POWER_BURST_SIZE,
+      life: PLAYER.POWER_BURST_TIME,
+      count: 4,
+      opacity: 0.8,
+      intensity: 1.9,
+    });
+
     this.hud = new HUD({
       onNextStage: () => this.#nextStage(),
       onRetry: () => this.startRun(),
@@ -89,8 +104,9 @@ export class Game {
     this.scrapScale = 1;
 
     this.playerHp = PLAYER.MAX_HP;
-    this.runScrap = 0; // 이번 판에 모은 스크랩
-    this.stageScrap = 0; // 이번 스테이지에 모은 스크랩(아직 정산 전)
+    this.wallet = 0; // 지금 쓸 수 있는 스크랩(무기를 사면 줄어든다)
+    this.runScrap = 0; // 이번 판에 번 스크랩 총량(쓴 돈을 빼지 않는다)
+    this.stageScrap = 0; // 이번 스테이지에 번 스크랩(아직 정산 전)
     this.totalScrap = loadNumber(STORAGE_KEYS.TOTAL_SCRAP);
     this.bestStage = loadNumber(STORAGE_KEYS.BEST_STAGE);
     this.bestWave = loadNumber(STORAGE_KEYS.BEST_WAVE);
@@ -103,6 +119,15 @@ export class Game {
     this.burstsLeft = 0;
 
     this._point = new THREE.Vector3(); // 처치 위치 계산용 임시 벡터
+
+    // 머지 보드. 재화는 이 게임이 들고 있고, 보드는 물어보고 시킬 뿐이다.
+    this.board = new MergeBoard({
+      getWallet: () => this.wallet,
+      spend: (cost) => this.#spendScrap(cost),
+      refund: (amount) => this.#refundScrap(amount),
+      onPowerChange: (power) => this.vulcan.setPower(power),
+      onMerge: () => this.#onWeaponMerged(),
+    });
 
     this.startRun();
   }
@@ -167,6 +192,7 @@ export class Game {
     }
 
     this.debris.update(dt);
+    this.powerBurst.update(dt);
 
     // 스크랩 줍기는 정산 전까지만 돌린다. 결과 화면이 뜬 뒤에 주우면
     // 화면의 숫자는 오르는데 누적에는 들어가지 않아 앞뒤가 어긋난다.
@@ -180,13 +206,17 @@ export class Game {
   startRun() {
     this.stage = 1;
     this.runScrap = 0;
+    this.wallet = 0;
     this.playerHp = PLAYER.MAX_HP;
 
     this.ship.reset();
     this.#clearField();
 
+    // 죽으면 보드도 함께 사라진다(로그라이트). 대신 레벨 1 무기 하나를 다시 준다.
+    this.board.reset();
+
     this.hud.hideScreens();
-    this.hud.setScrap(0);
+    this.hud.setScrap(this.wallet);
     this.hud.setHp(this.playerHp, PLAYER.MAX_HP);
 
     this.#startStage();
@@ -412,7 +442,7 @@ export class Game {
         this.vulcan.recycle(b);
         this.cameraFX.shake(BOSS.HIT_SHAKE_STRENGTH, BOSS.HIT_SHAKE_TIME);
 
-        if (this.boss.hit(VULCAN.BULLET_DAMAGE, bx, byTop)) {
+        if (this.boss.hit(this.vulcan.damage, bx, byTop)) {
           this.#onBossDefeated();
           return; // 보스가 터졌으면 이번 프레임 판정은 여기서 끝낸다.
         }
@@ -425,7 +455,7 @@ export class Game {
 
         this.vulcan.recycle(b);
 
-        if (this.enemies.hit(e, VULCAN.BULLET_DAMAGE)) {
+        if (this.enemies.hit(e, this.vulcan.damage)) {
           this._point.copy(e.group.position);
           const def = e.def;
           this.enemies.release(e);
@@ -522,7 +552,39 @@ export class Game {
   #collectScrap() {
     this.runScrap += 1;
     this.stageScrap += 1;
-    this.hud.setScrap(this.runScrap);
+    this.wallet += 1;
+    this.hud.setScrap(this.wallet);
+    this.board?.refreshWallet();
+  }
+
+  /**
+   * 무기 구매. 지갑에서만 빠진다.
+   * 번 총량(runScrap)은 건드리지 않아, 누적 스크랩은 "이번 판에 번 돈" 기준을 지킨다.
+   * 쓴 돈을 다시 빼지 않는 후한 셈이다. 초반 성장 체감을 위해 일부러 그렇게 뒀다.
+   * @returns {boolean} 살 수 있었는지
+   */
+  #spendScrap(cost) {
+    if (this.wallet < cost) return false;
+
+    this.wallet -= cost;
+    this.hud.setScrap(this.wallet);
+    return true;
+  }
+
+  /** 분해 환급. 되돌려받는 돈이라 번 총량에는 넣지 않는다. */
+  #refundScrap(amount) {
+    this.wallet += amount;
+    this.hud.setScrap(this.wallet);
+  }
+
+  /** 합성으로 주포가 세진 순간. 화력 갱신은 보드가 이미 했고, 여기서는 몸으로 보여 준다. */
+  #onWeaponMerged() {
+    if (this.ship.destroyed) return;
+
+    const p = this.ship.mesh.position;
+    this.ship.playPowerUp();
+    this.powerBurst.spawn(p.x, p.y, p.z + 0.4);
+    this.cameraFX.shake(PLAYER.POWER_SHAKE_STRENGTH, PLAYER.POWER_SHAKE_TIME);
   }
 
   /** 이번 스테이지에서 모은 몫을 누적 스크랩에 넣고 저장한다. 두 번 세지 않는다. */
@@ -556,6 +618,7 @@ export class Game {
     this.enemies.reset();
     this.debris.reset();
     this.scrap.reset();
+    this.powerBurst.reset();
     this.boss.despawn();
 
     this.hitStop = 0;

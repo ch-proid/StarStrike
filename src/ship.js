@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createPlayerShip } from './ships/player-ship.js';
+import { boardInput } from './combat/board.js';
 import { PLAYER } from './combat/tuning.js';
 
 // 플레이어 우주선.
@@ -8,6 +9,7 @@ import { PLAYER } from './combat/tuning.js';
 //
 // 체력과 사망 판정은 게임 진행(combat/game.js)이 들고, 여기서는 그 결과를 눈에 보이게만 한다.
 // 피격하면 잠깐 붉게 물들고, 무적 시간 동안 깜빡인다.
+// 합성으로 주포가 세지면 푸르게 번쩍이며 살짝 부푼다.
 
 const MOVE_RANGE_X = 8; // 좌우 이동 가능 범위 기본값(생성자에 moveLimit 미전달 시 사용)
 const MOVE_SPEED = 10; // 목표 위치로 따라가는 속도
@@ -50,9 +52,13 @@ export class Ship {
 
     this.homeY = this.mesh.position.y;
 
-    // 피격 연출: 적기와 같은 재질 스왑 방식이되 색만 붉다.
+    // 연출용 재질 스왑: 피격은 붉게, 파워업은 푸르게.
     this.hurtMat = new THREE.MeshBasicMaterial({
       color: PLAYER.HURT_FLASH_COLOR,
+      toneMapped: false,
+    });
+    this.powerMat = new THREE.MeshBasicMaterial({
+      color: PLAYER.POWER_FLASH_COLOR,
       toneMapped: false,
     });
     this.meshes = [];
@@ -61,7 +67,9 @@ export class Ship {
     });
     this.baseMats = this.meshes.map((m) => m.material);
 
+    this.baseScale = this.mesh.scale.x;
     this.hurtFlash = 0;
+    this.powerFlash = 0;
     this.invuln = 0;
     this.destroyed = false;
 
@@ -78,15 +86,25 @@ export class Ship {
     this.invuln = grantInvuln
       ? PLAYER.INVULN_TIME
       : Math.max(this.invuln, PLAYER.HURT_FLASH_TIME);
-    this.#setHurtMaterial(true);
+    this.#applyFlashMaterial();
+  }
+
+  /** 합성으로 주포가 세진 순간. 짧게 번쩍이며 부푼다. */
+  playPowerUp() {
+    if (this.destroyed) return;
+
+    this.powerFlash = PLAYER.POWER_FLASH_TIME;
+    this.#applyFlashMaterial();
   }
 
   /** 격추. 기체를 화면에서 지운다. 폭발 파편은 게임 쪽에서 뿌린다. */
   destroy() {
     this.destroyed = true;
     this.hurtFlash = 0;
+    this.powerFlash = 0;
     this.invuln = 0;
-    this.#setHurtMaterial(false);
+    this.#applyFlashMaterial();
+    this.mesh.scale.setScalar(this.baseScale);
     this.mesh.visible = false;
   }
 
@@ -94,11 +112,13 @@ export class Ship {
   reset() {
     this.destroyed = false;
     this.hurtFlash = 0;
+    this.powerFlash = 0;
     this.invuln = 0;
-    this.#setHurtMaterial(false);
+    this.#applyFlashMaterial();
 
     this.mesh.position.set(0, this.homeY, 0);
     this.mesh.rotation.z = 0;
+    this.mesh.scale.setScalar(this.baseScale);
     this.mesh.visible = true;
 
     this.targetX = this.pointerX * this.moveLimit;
@@ -117,14 +137,22 @@ export class Ship {
       this.targetX = this.pointerX * this.moveLimit;
     };
 
-    window.addEventListener('mousemove', (e) => updateFromClientX(e.clientX));
+    // 머지 보드 위의 손짓은 조종이 아니다. 보드에서 시작된 입력과
+    // 무기를 끌고 있는 동안의 움직임은 흘려보낸다.
+    const forBoard = (e) =>
+      boardInput.dragging ||
+      (e.target instanceof Element && e.target.closest('#board') !== null);
+
+    window.addEventListener('mousemove', (e) => {
+      if (forBoard(e)) return;
+      updateFromClientX(e.clientX);
+    });
 
     window.addEventListener(
       'touchmove',
       (e) => {
-        if (e.touches.length > 0) {
-          updateFromClientX(e.touches[0].clientX);
-        }
+        if (forBoard(e) || e.touches.length === 0) return;
+        updateFromClientX(e.touches[0].clientX);
       },
       { passive: true }
     );
@@ -134,7 +162,7 @@ export class Ship {
     if (this.destroyed) return;
 
     this.time += dt;
-    this.#updateHurt(dt);
+    this.#updateFlash(dt);
 
     // 목표 x좌표로 부드럽게 이동
     const dx = this.targetX - this.mesh.position.x;
@@ -151,15 +179,31 @@ export class Ship {
     }
   }
 
-  /** 붉은 번쩍임 → 무적 깜빡임 → 원래대로. */
-  #updateHurt(dt) {
+  /** 파워업 부풀림 → 붉은 번쩍임 → 무적 깜빡임 → 원래대로. */
+  #updateFlash(dt) {
+    if (this.powerFlash > 0) {
+      this.powerFlash -= dt;
+
+      // 번쩍이는 동안 살짝 부풀었다가 제자리로 돌아온다.
+      const t = Math.max(this.powerFlash, 0) / PLAYER.POWER_FLASH_TIME;
+      this.mesh.scale.setScalar(this.baseScale * (1 + t * PLAYER.POWER_POP));
+
+      if (this.powerFlash <= 0) {
+        this.powerFlash = 0;
+        this.#applyFlashMaterial();
+      }
+    }
+
     if (this.invuln <= 0) return;
 
     this.invuln -= dt;
 
     if (this.hurtFlash > 0) {
       this.hurtFlash -= dt;
-      if (this.hurtFlash <= 0) this.#setHurtMaterial(false);
+      if (this.hurtFlash <= 0) {
+        this.hurtFlash = 0;
+        this.#applyFlashMaterial();
+      }
     }
 
     if (this.invuln <= 0) {
@@ -172,10 +216,13 @@ export class Ship {
     this.mesh.visible = phase % 2 === 0;
   }
 
-  #setHurtMaterial(on) {
+  /** 지금 켜져 있는 연출 중 급한 쪽(피격)을 먼저 입힌다. */
+  #applyFlashMaterial() {
     // 번쩍이는 중에 또 맞아도 원본 재질을 잃지 않도록 baseMats에서만 되돌린다.
+    const flash = this.hurtFlash > 0 ? this.hurtMat : this.powerFlash > 0 ? this.powerMat : null;
+
     for (let i = 0; i < this.meshes.length; i++) {
-      this.meshes[i].material = on ? this.hurtMat : this.baseMats[i];
+      this.meshes[i].material = flash ?? this.baseMats[i];
     }
   }
 }

@@ -9,6 +9,7 @@ import { Ship } from './ship.js';
 import { CameraFX } from './camera-fx.js';
 import { Game } from './combat/game.js';
 import { createBossStation } from './ships/boss-station.js';
+import { FIELD, VIEW } from './combat/tuning.js';
 
 // --- 씬 / 렌더러 초기화 ---
 
@@ -32,24 +33,62 @@ const camera = new THREE.PerspectiveCamera(
   200
 );
 
+// 기준 배치. 시선이 z=0 평면의 CAMERA_LOOK_AT를 지나므로, 그 점이 곧 화면 중심이다.
 const CAMERA_BASE_POSITION = new THREE.Vector3(0, -2, 16);
+const CAMERA_LOOK_AT = new THREE.Vector3(0, 2, 0); // 약간 위쪽을 봐 기울어진 각도를 만든다.
+
 camera.position.copy(CAMERA_BASE_POSITION);
-camera.lookAt(0, 2, 0); // 약간 위쪽을 바라보게 해 기울어진 각도를 만든다.
+camera.lookAt(CAMERA_LOOK_AT);
 
 const cameraFX = new CameraFX(camera, CAMERA_BASE_POSITION);
 
-// --- 화면 비율 대응: z=0 평면에서 카메라에 보이는 가로 반폭 ---
+// --- 화면 비율 대응 ---
 // 카메라가 살짝 기울어져 있으므로, 화면 중앙(시선 방향)을 기준으로 근사한다.
-// 1) 카메라 위치에서 시선 방향으로 z=0 평면까지의 거리 d를 구하고
-// 2) 그 거리에서의 반높이(tan(fov/2) * d)에 aspect를 곱해 반폭을 얻는다.
-function getVisibleHalfWidthAtZ0() {
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  const d = -camera.position.z / dir.z; // 카메라 → z=0 평면까지 시선 방향 거리
-  const vFov = THREE.MathUtils.degToRad(camera.fov);
-  const visibleHalfHeight = Math.tan(vFov / 2) * d;
-  return visibleHalfHeight * camera.aspect;
+// 시선이 z=0 평면의 CAMERA_LOOK_AT를 지나므로, 그 점까지의 거리 d가 곧 기준 거리다.
+
+/** z=0 평면에서 보이는 세로 반높이. 시야각과 거리만으로 정해진다(화면 비율과 무관). */
+function visibleHalfHeightAtZ0() {
+  const d = CAMERA_BASE_POSITION.distanceTo(CAMERA_LOOK_AT);
+  return Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * d;
 }
+
+/** z=0 평면에서 보이는 가로 반폭. */
+function getVisibleHalfWidthAtZ0() {
+  return visibleHalfHeightAtZ0() * camera.aspect;
+}
+
+/**
+ * 머지 보드가 화면 아래를 차지한 만큼 전장을 위로 올린다.
+ *
+ * 카메라 위치와 바라보는 점을 같은 값만큼 내리면 기울기와 거리는 그대로 두고
+ * 프레임만 세로로 옮길 수 있다. 얼마나 옮길지는 "보드 윗변이 방어선보다
+ * VIEW.BOARD_TOP_MARGIN만큼 아래에 오도록"이라는 한 줄로 정한다.
+ */
+function applyFraming() {
+  const boardEl = document.getElementById('board');
+  const ratio = boardEl
+    ? Math.min(boardEl.getBoundingClientRect().height / window.innerHeight, VIEW.BOARD_RATIO_MAX)
+    : 0;
+
+  const halfHeight = visibleHalfHeightAtZ0();
+  const boardTopY = FIELD.DEFENSE_LINE_Y - VIEW.BOARD_TOP_MARGIN;
+
+  // 화면 아랫변 = 중심 - 반높이, 보드 윗변 = 아랫변 + (보드 비율 × 전체 높이)
+  const centerY = boardTopY + halfHeight * (1 - 2 * ratio);
+  const shiftY = centerY - CAMERA_LOOK_AT.y;
+
+  camera.position.set(
+    CAMERA_BASE_POSITION.x,
+    CAMERA_BASE_POSITION.y + shiftY,
+    CAMERA_BASE_POSITION.z
+  );
+  camera.lookAt(CAMERA_LOOK_AT.x, CAMERA_LOOK_AT.y + shiftY, CAMERA_LOOK_AT.z);
+  camera.updateMatrixWorld();
+
+  cameraFX.setBase(camera.position);
+}
+
+applyFraming();
 
 let visibleHalfWidth = getVisibleHalfWidthAtZ0();
 
@@ -108,6 +147,8 @@ window.addEventListener('resize', () => {
   composer.setSize(window.innerWidth, window.innerHeight);
   bloomPass.setSize(window.innerWidth, window.innerHeight);
 
+  // 보드 높이가 화면 높이에 매여 있어, 창이 바뀌면 화면 구성도 다시 잡는다.
+  applyFraming();
   visibleHalfWidth = getVisibleHalfWidthAtZ0();
   ship.setMoveLimit(visibleHalfWidth * PLAYER_MOVE_LIMIT_RATIO);
   game.setBounds(visibleHalfWidth);

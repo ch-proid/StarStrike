@@ -34,6 +34,7 @@
 
       #hud,
       #banner,
+      #board,
       .screen {
         font-family: system-ui, -apple-system, sans-serif;
         user-select: none;
@@ -44,6 +45,8 @@
         display: none !important;
       }
 
+      /* 층위: 보드(5) < HUD·배너(10) < 결과 화면(20) < 드래그 중인 무기(40) */
+
       /* --- 인게임 HUD: 화면 위쪽 --- */
 
       #hud {
@@ -51,6 +54,7 @@
         top: calc(env(safe-area-inset-top, 0px) + 12px);
         left: 14px;
         right: 14px;
+        z-index: 10;
         pointer-events: none;
       }
 
@@ -182,9 +186,10 @@
 
       #banner {
         position: fixed;
-        top: 34%;
+        top: 26%;
         left: 0;
         right: 0;
+        z-index: 10;
         text-align: center;
         pointer-events: none;
       }
@@ -228,9 +233,11 @@
 
       /* --- 결과 화면(스테이지 클리어 / 사망) --- */
 
+      /* 결과 화면은 보드 위를 덮는다. 정산 중에는 보드를 만질 수 없어야 한다. */
       .screen {
         position: fixed;
         inset: 0;
+        z-index: 20;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -329,6 +336,320 @@
         opacity: 0.45;
         cursor: default;
       }
+
+      /* --- 머지 보드: 화면 아래쪽 --- */
+
+      #board {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 5;
+        box-sizing: border-box;
+        height: calc(clamp(190px, 33vh, 320px) + env(safe-area-inset-bottom, 0px));
+        padding: 7px 10px calc(9px + env(safe-area-inset-bottom, 0px));
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: linear-gradient(180deg, rgba(6, 11, 24, 0.7), rgba(4, 7, 16, 0.97) 18%);
+        box-shadow:
+          inset 0 1px 0 rgba(120, 190, 255, 0.2),
+          0 -16px 36px rgba(0, 0, 0, 0.55);
+        touch-action: none;
+      }
+
+      /* 머리줄: 주포 상태 · 안내 문구 · 총 화력 */
+
+      #board-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: #7f9bbb;
+        white-space: nowrap;
+      }
+
+      #board-main b {
+        color: #cfe6ff;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      #board-note {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: center;
+        color: #ffbf6b;
+      }
+
+      #board-power {
+        margin-left: auto;
+        color: #7f9bbb;
+      }
+
+      #board-power b {
+        color: #7fe9ff;
+        font-size: 14px;
+        font-weight: 800;
+        text-shadow: 0 0 10px rgba(90, 220, 255, 0.55);
+      }
+
+      #board-support {
+        color: #9dff9a;
+        font-style: normal;
+      }
+
+      /* 몸통: 왼쪽 그리드 + 오른쪽 세로줄 */
+
+      #board-body {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto;
+        display: flex;
+        gap: 8px;
+      }
+
+      #board-grid {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 6px;
+      }
+
+      .cell {
+        position: relative;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.035);
+        box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.13);
+      }
+
+      .cell.over {
+        background: rgba(127, 233, 255, 0.1);
+        box-shadow: inset 0 0 0 2px rgba(127, 233, 255, 0.75);
+      }
+
+      .cell.merge {
+        background: rgba(255, 214, 102, 0.14);
+        box-shadow: inset 0 0 0 2px rgba(255, 214, 102, 0.9);
+      }
+
+      .cell.picked > .wpn {
+        opacity: 0.25;
+      }
+
+      /* 합성 순간의 번쩍임 */
+      .cell.flash::after {
+        content: '';
+        position: absolute;
+        inset: -5px;
+        border-radius: 13px;
+        pointer-events: none;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 68%);
+        animation: cell-flash 0.36s ease-out forwards;
+      }
+
+      @keyframes cell-flash {
+        from {
+          opacity: 0.9;
+          transform: scale(0.7);
+        }
+        to {
+          opacity: 0;
+          transform: scale(1.25);
+        }
+      }
+
+      /* 무기 타일 */
+
+      .wpn {
+        position: absolute;
+        inset: 3px;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+        color: #06121c;
+        --c1: #9aa8b4;
+        --c2: #5b6874;
+        --glow: rgba(160, 180, 200, 0.35);
+        background: linear-gradient(165deg, var(--c1), var(--c2));
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.4),
+          0 3px 9px rgba(0, 0, 0, 0.45),
+          0 0 14px var(--glow);
+        cursor: grab;
+      }
+
+      .wpn .mark {
+        font-size: 9px;
+        line-height: 1;
+        letter-spacing: -1px;
+        opacity: 0.72;
+      }
+
+      .wpn .lv {
+        font-size: 20px;
+        font-weight: 900;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28);
+      }
+
+      /* 레벨 1~3 회색→시안, 4~6 파랑→보라, 7 이상 금색 */
+      .wpn[data-level='2'] {
+        --c1: #7fd0dd;
+        --c2: #3d7f8d;
+        --glow: rgba(110, 210, 230, 0.45);
+      }
+      .wpn[data-level='3'] {
+        --c1: #6ce8ff;
+        --c2: #1f93b6;
+        --glow: rgba(90, 225, 255, 0.6);
+      }
+      .wpn[data-level='4'] {
+        --c1: #6fb4ff;
+        --c2: #2350c8;
+        --glow: rgba(90, 150, 255, 0.6);
+      }
+      .wpn[data-level='5'] {
+        --c1: #9a97ff;
+        --c2: #4534c4;
+        --glow: rgba(140, 130, 255, 0.6);
+      }
+      .wpn[data-level='6'] {
+        --c1: #c98cf5;
+        --c2: #6c1fb0;
+        --glow: rgba(190, 110, 245, 0.65);
+      }
+      .wpn[data-level='7'] {
+        --c1: #ffd06a;
+        --c2: #c07a10;
+        --glow: rgba(255, 190, 70, 0.7);
+      }
+      .wpn[data-level='8'] {
+        --c1: #ffdc80;
+        --c2: #cf8c0c;
+        --glow: rgba(255, 205, 90, 0.75);
+      }
+      .wpn[data-level='9'] {
+        --c1: #ffe795;
+        --c2: #dfa008;
+        --glow: rgba(255, 220, 110, 0.8);
+      }
+      .wpn[data-level='10'],
+      .wpn[data-level='11'],
+      .wpn[data-level='12'] {
+        --c1: #fff3c2;
+        --c2: #ecb400;
+        --glow: rgba(255, 235, 150, 0.9);
+      }
+
+      @keyframes wpn-pop {
+        0% {
+          transform: scale(0.66);
+        }
+        55% {
+          transform: scale(1.22);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      .wpn.pop {
+        animation: wpn-pop 0.3s ease-out;
+      }
+
+      /* 손끝을 따라다니는 무기 */
+      .wpn.drag {
+        position: fixed;
+        inset: auto;
+        z-index: 40;
+        pointer-events: none;
+        transform: translate(-50%, -50%) scale(1.14);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.4),
+          0 10px 22px rgba(0, 0, 0, 0.6),
+          0 0 22px var(--glow);
+      }
+
+      /* 오른쪽 세로줄: 구매 · 광고 자리 · 분해 */
+
+      #board-side {
+        flex: 0 0 96px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      #btn-buy {
+        flex: 1;
+        margin: 0;
+        padding: 6px 4px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        border-radius: 10px;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+      }
+
+      #btn-buy .cost {
+        font-size: 15px;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+      }
+
+      #btn-buy[disabled] {
+        color: #62788d;
+        background: rgba(255, 255, 255, 0.06);
+        box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.14);
+        cursor: default;
+      }
+
+      #btn-ad-merge {
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 7px 4px;
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        line-height: 1.1;
+      }
+
+      #board-trash {
+        flex: 0 0 34%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        border-radius: 10px;
+        border: 1px dashed rgba(255, 140, 140, 0.42);
+        color: #ff9c9c;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+      }
+
+      #board-trash .ico {
+        font-size: 17px;
+        line-height: 1;
+      }
+
+      #board-trash.over {
+        background: rgba(255, 80, 80, 0.2);
+        border-style: solid;
+        border-color: #ff9c9c;
+        color: #ffdada;
+      }
     </style>
   </head>
   <body>
@@ -352,6 +673,29 @@
       <div id="boss-hp" class="hidden">
         <span class="name">ORBITAL STATION</span>
         <div class="bar"><i id="boss-hp-fill"></i></div>
+      </div>
+    </div>
+
+    <!-- 머지 보드: 칸은 board.js가 BOARD 상수만큼 만들어 넣는다. -->
+    <div id="board">
+      <div id="board-head">
+        <span id="board-main">주포 <b>LV 1</b></span>
+        <span id="board-note"></span>
+        <span id="board-power">화력 <b>1.0</b><i id="board-support"></i></span>
+      </div>
+
+      <div id="board-body">
+        <div id="board-grid"></div>
+
+        <div id="board-side">
+          <button id="btn-buy" type="button">
+            <span>무기 구매</span>
+            <span class="cost" id="buy-cost">20</span>
+          </button>
+          <!-- 자리만 잡아 둔다. 보드가 꽉 찼을 때의 보상형 광고는 나중에 붙인다. -->
+          <button id="btn-ad-merge" class="ghost" disabled>3개 레벨업 (광고) · 준비 중</button>
+          <div id="board-trash"><span class="ico">♻</span><span>분해</span></div>
+        </div>
       </div>
     </div>
 
