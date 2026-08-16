@@ -346,9 +346,87 @@ export const WEAPON = {
   REFUND_PER_LEVEL: 1.9, // 환급 = REFUND_BASE × 1.9 ^ (레벨 - 1)
 };
 
+/**
+ * 아웃게임 퍽(격납고).
+ *
+ * 죽으면 격납고가 열리고, 누적 스크랩으로 영구 성장을 산다.
+ * 배열 순서가 곧 화면에 놓이는 순서다.
+ *
+ *   가격(레벨 n → n+1) = COST_BASE × COST_GROWTH ^ n   (10 단위로 반올림)
+ *
+ * 가격 곡선의 기준은 실제 수입이다. 스테이지 1을 온전히 돌면 스크랩 400 언저리가 들어온다.
+ * 그래서 첫 판이 끝나면 싼 퍽 두세 개의 1레벨을 살 수 있고,
+ * 스테이지 3에서 두세 번 죽으며 3000쯤 모으면 주요 퍽을 2~3레벨 올려 벽을 넘게 된다.
+ *
+ * 최대 레벨이 퍽마다 다른 것은 효과의 무게가 다르기 때문이다.
+ * 공격력·장갑은 조금씩 오래 오르고, 보호막·시작 무기·정예 보급은 한 레벨이 크게 바뀐다.
+ */
+export const PERKS = [
+  {
+    ID: 'power',
+    NAME: '공격력',
+    MAX_LEVEL: 10,
+    PER_LEVEL: 0.1, // 주포 최종 공격력 배수 = 1.1 ^ 레벨 (곱연산)
+    COST_BASE: 150,
+    COST_GROWTH: 1.5,
+  },
+  {
+    ID: 'armor',
+    NAME: '장갑',
+    MAX_LEVEL: 10,
+    PER_LEVEL: 15, // 최대 체력 +15
+    COST_BASE: 100,
+    COST_GROWTH: 1.45,
+  },
+  {
+    ID: 'shield',
+    NAME: '보호막',
+    MAX_LEVEL: 5,
+    PER_LEVEL: 1, // 판을 시작할 때 받는 1회용 보호막 수
+    COST_BASE: 300,
+    COST_GROWTH: 2.0,
+  },
+  {
+    ID: 'start',
+    NAME: '시작 무기',
+    MAX_LEVEL: 5,
+    PER_LEVEL: 1, // 공짜로 받는 무기 레벨 +1
+    COST_BASE: 400,
+    COST_GROWTH: 2.4,
+  },
+  {
+    ID: 'elite',
+    NAME: '정예 보급',
+    MAX_LEVEL: 5,
+    PER_LEVEL: 0.08, // 무기를 살 때 한 단계 위가 나올 확률 +8%p
+    COST_BASE: 200,
+    COST_GROWTH: 1.8,
+  },
+];
+
+/**
+ * 보호막이 깨지는 순간.
+ *
+ * 한 번 깨지면 짧은 유예 시간 동안은 다음 보호막이 소모되지 않는다.
+ * 방어선 통과 피해는 무적을 뚫고 들어오기 때문에, 유예가 없으면
+ * 한 번의 돌파에 보호막이 통째로 녹아 없어진다.
+ */
+export const SHIELD = {
+  COLOR: 0x6fd8ff,
+  BURST_RADIUS: 3.4, // 퍼져 나가는 고리의 최대 반지름(월드 단위)
+  BURST_TIME: 0.36,
+
+  GRACE_TIME: 0.8, // 깨진 뒤 다음 보호막이 소모되지 않는 시간(초)
+
+  SHAKE_STRENGTH: 0.4,
+  SHAKE_TIME: 0.24,
+  STOP_TIME: 0.05,
+};
+
 /** 저장 키(localStorage). 아웃게임 상점이 이 값을 읽어 간다. */
 export const STORAGE_KEYS = {
   TOTAL_SCRAP: 'starstrike.totalScrap', // 누적 스크랩
   BEST_STAGE: 'starstrike.bestStage', // 최고 도달 스테이지
   BEST_WAVE: 'starstrike.bestWave', // 그 스테이지에서 도달한 웨이브
+  PERKS: 'starstrike.perks', // 격납고 퍽 레벨(JSON: { 퍽 id: 레벨 })
 };

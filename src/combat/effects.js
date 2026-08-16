@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { geo, glowMat, glowPlane, glowTexture } from '../ships/common.js';
-import { DEBRIS, SCRAP } from './tuning.js';
+import { DEBRIS, SCRAP, SHIELD } from './tuning.js';
 
 // 타격 연출용 파티클들. 모두 오브젝트 풀이고, 지오메트리는 공유한다.
 // 재질은 "수명 동안 흐려져야 하는가"에 따라 갈린다.
@@ -65,6 +65,82 @@ export class FlashPool {
       item.time = 0;
       item.mesh.visible = false;
     }
+  }
+}
+
+// --- 보호막 파열 ---
+
+/**
+ * 보호막이 깨질 때 기체 둘레로 퍼지는 파란 고리.
+ * 한 번에 하나면 충분해서 풀을 두지 않는다. 겹쳐 터지면 나중 것이 앞을 덮어쓴다.
+ *
+ * 수명 동안 흐려져야 하므로 재질을 공유 캐시에서 꺼내지 않고 여기서 따로 만든다.
+ */
+export class ShieldBurst {
+  /** @param {THREE.Scene} scene */
+  constructor(scene) {
+    this.time = 0;
+
+    this.material = new THREE.MeshBasicMaterial({
+      color: SHIELD.COLOR,
+      toneMapped: false,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    this.material.color.multiplyScalar(1.8); // 블룸 임계값을 확실히 넘긴다.
+
+    // 반지름 1짜리 얇은 고리를 만들어 두고, 퍼지는 정도는 scale로만 준다.
+    const g = geo('fx.shield.ring', () => new THREE.RingGeometry(0.86, 1, 48));
+
+    this.mesh = new THREE.Mesh(g, this.material);
+    this.mesh.visible = false;
+    this.mesh.renderOrder = 3;
+    scene.add(this.mesh);
+
+    // 고리 안쪽을 채우는 짧은 섬광. 고리만 있으면 파열이 얇게 느껴진다.
+    this.core = new FlashPool(scene, {
+      color: SHIELD.COLOR,
+      size: SHIELD.BURST_RADIUS * 0.9,
+      life: SHIELD.BURST_TIME * 0.6,
+      count: 2,
+      opacity: 0.75,
+      intensity: 1.9,
+    });
+  }
+
+  spawn(x, y, z) {
+    this.time = SHIELD.BURST_TIME;
+    this.mesh.position.set(x, y, z);
+    this.mesh.scale.setScalar(SHIELD.BURST_RADIUS * 0.35);
+    this.material.opacity = 1;
+    this.mesh.visible = true;
+
+    this.core.spawn(x, y, z);
+  }
+
+  update(dt) {
+    this.core.update(dt);
+
+    if (this.time <= 0) return;
+
+    this.time -= dt;
+    if (this.time <= 0) {
+      this.mesh.visible = false;
+      return;
+    }
+
+    const t = 1 - this.time / SHIELD.BURST_TIME; // 0 → 1
+    this.mesh.scale.setScalar(SHIELD.BURST_RADIUS * (0.35 + t * 0.85));
+    this.material.opacity = 1 - t * t;
+  }
+
+  reset() {
+    this.time = 0;
+    this.mesh.visible = false;
+    this.core.reset();
   }
 }
 

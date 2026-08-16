@@ -73,13 +73,16 @@ export class MergeBoard {
    * @param {(amount: number) => void} handlers.refund 분해 환급
    * @param {(power: number) => void} handlers.onPowerChange 총 공격력이 바뀔 때
    * @param {(level: number) => void} handlers.onMerge 합성이 일어난 순간(파워업 연출용)
+   * @param {() => number} [handlers.getEliteChance] 정예 보급 퍽이 준 확률(0~1).
+   *   구매한 무기가 한 단계 위로 나올 확률이다.
    */
-  constructor({ getWallet, spend, refund, onPowerChange, onMerge }) {
+  constructor({ getWallet, spend, refund, onPowerChange, onMerge, getEliteChance = () => 0 }) {
     this.getWallet = getWallet;
     this.spend = spend;
     this.refund = refund;
     this.onPowerChange = onPowerChange;
     this.onMerge = onMerge;
+    this.getEliteChance = getEliteChance;
 
     this.size = BOARD.COLS * BOARD.ROWS;
     /** @type {number[]} 칸마다 무기 레벨. 0이면 빈 칸이다. */
@@ -161,12 +164,15 @@ export class MergeBoard {
 
   // --- 판 시작 -------------------------------------------------------------
 
-  /** 새 판. 보드를 비우고 가격을 되돌린 뒤 시작 무기를 한 개 준다. */
-  reset() {
+  /**
+   * 새 판. 보드를 비우고 가격을 되돌린 뒤 시작 무기를 한 개 준다.
+   * @param {number} [startLevel] 공짜로 주는 무기 레벨. 격납고의 시작 무기 퍽이 올려 준다.
+   */
+  reset(startLevel = WEAPON.START_LEVEL) {
     this.#endDrag(); // 끌던 무기가 남아 있으면 여기서 걷힌다.
     this.slots.fill(0);
     this.purchases = 0;
-    this.slots[0] = WEAPON.START_LEVEL;
+    this.slots[0] = Math.min(Math.max(Math.round(startLevel), 1), WEAPON.MAX_LEVEL);
 
     this.#render();
     this.#refresh();
@@ -179,11 +185,14 @@ export class MergeBoard {
     if (slot < 0) return; // 보드가 꽉 찼다.
     if (!this.spend(this.cost)) return; // 스크랩이 모자란다.
 
+    // 정예 보급: 터지면 레벨 1이 아니라 2가 나온다. 금빛 번쩍임으로 구분한다.
+    const elite = Math.random() < this.getEliteChance();
+
     this.purchases += 1;
-    this.slots[slot] = 1;
+    this.slots[slot] = elite ? 2 : 1;
 
     this.#render();
-    this.#pop(slot, false);
+    this.#pop(slot, elite, elite);
     this.#refresh();
   }
 
@@ -246,17 +255,21 @@ export class MergeBoard {
    * 합성·구매 순간의 작은 팝.
    * 클래스를 뗐다가 강제로 다시 계산한 뒤 붙인다. 그래야 같은 칸에서 연달아
    * 합성해도 애니메이션이 처음부터 다시 돈다.
+   *
+   * @param {boolean} flash 칸이 번쩍이는가(합성과 정예 보급만)
+   * @param {boolean} [gold] 그 번쩍임이 금빛인가(정예 보급)
    */
-  #pop(index, flash) {
+  #pop(index, flash, gold = false) {
     const cell = this.cells[index];
     const tile = cell.firstElementChild;
     if (!tile) return;
 
     tile.classList.remove('pop');
-    cell.classList.remove('flash');
+    cell.classList.remove('flash', 'gold');
     void tile.offsetWidth; // 지우지 말 것. 이 한 줄이 애니메이션을 되감는다.
     tile.classList.add('pop');
     if (flash) cell.classList.add('flash');
+    if (gold) cell.classList.add('gold');
   }
 
   /** 구매 버튼을 다시 그리고, 바뀐 화력을 밖으로 알린다. */

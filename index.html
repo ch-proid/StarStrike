@@ -231,6 +231,52 @@
         color: var(--danger);
       }
 
+      /* 보호막: 체력 바 왼쪽의 작은 방패들. 깨진 자리는 지우지 않고 흐리게 남긴다. */
+
+      #shield-pips {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      #shield-pips .pip {
+        display: flex;
+        filter: drop-shadow(0 0 4px var(--accent-line));
+        transition:
+          opacity 0.18s,
+          filter 0.18s;
+      }
+
+      #shield-pips svg {
+        width: 11px;
+        height: 11px;
+        fill: var(--accent);
+      }
+
+      #shield-pips .pip.spent {
+        opacity: 0.16;
+        filter: none;
+      }
+
+      #shield-pips .pip.breaking {
+        animation: shield-break 0.38s ease-out;
+      }
+
+      @keyframes shield-break {
+        0% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        30% {
+          opacity: 1;
+          transform: scale(1.55);
+        }
+        100% {
+          opacity: 0.16;
+          transform: scale(1);
+        }
+      }
+
       /* =====================================================================
          피해 연출: 붉은 비네트 + 뜨는 숫자
          ===================================================================== */
@@ -438,6 +484,213 @@
       }
 
       /* =====================================================================
+         격납고: 죽어야 열리는 아웃게임 상점
+         결과 화면과 같은 계층·토큰을 쓴다. 다른 점은 둘뿐이다.
+         카드가 길어지면 세로로 굴러가고, 채워진 시안 버튼은 [출격] 하나뿐이다.
+         ===================================================================== */
+
+      #screen-hangar {
+        align-items: flex-start;
+        padding: 14px;
+        overflow-x: hidden; /* 반올림 1px 때문에 가로 막대가 생기지 않게 */
+        overflow-y: auto;
+        touch-action: pan-y; /* body의 touch-action: none을 이 화면에서만 푼다 */
+      }
+
+      /* 여유가 있으면 가운데, 넘치면 위에서부터. 잘리지 않고 굴러간다. */
+      .panel.hangar {
+        margin: auto;
+        max-width: 340px;
+        padding: 20px 16px 16px;
+      }
+
+      .panel.hangar h1 {
+        font-size: 20px;
+      }
+
+      /* 보유 누적 스크랩 */
+      .panel .bank {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        margin: 9px 0 15px;
+        color: var(--money);
+        font-size: 21px;
+        font-weight: 800;
+      }
+
+      .panel .bank svg {
+        width: 15px;
+        height: 15px;
+        fill: currentColor;
+        opacity: 0.9;
+      }
+
+      .panel .bank b {
+        font-weight: 800;
+      }
+
+      #perk-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .perk {
+        position: relative;
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 10px;
+        border-radius: var(--r-sm);
+        background: var(--bg-chip);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        text-align: left;
+      }
+
+      .perk-icon {
+        display: flex;
+        color: var(--text-dim);
+      }
+
+      .perk-icon svg {
+        width: 22px;
+        height: 22px;
+        fill: currentColor;
+      }
+
+      .perk-body {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .perk-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .perk-name {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      /* 지금 레벨은 점으로 센다. 숫자를 하나 더 두지 않는다. */
+      .perk-dots {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .perk-dots .dot {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.14);
+      }
+
+      .perk-dots .dot.on {
+        background: var(--accent);
+        box-shadow: 0 0 5px var(--accent-line);
+      }
+
+      /* 효과는 설명 문장이 아니라 수치로 말한다: 지금 → 다음 */
+      .perk-value {
+        display: flex;
+        align-items: baseline;
+        gap: 5px;
+      }
+
+      .perk-value b {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-dim);
+      }
+
+      .perk-value i {
+        font-style: normal;
+        font-size: 10px;
+        color: var(--text-dim);
+        opacity: 0.5;
+      }
+
+      .perk-value em {
+        font-style: normal;
+        font-size: 12px;
+        font-weight: 800;
+        color: var(--accent);
+      }
+
+      /* 가격 버튼은 테두리형이다. 채워진 시안 버튼은 [출격] 하나뿐이어야 한다. */
+      .perk-buy {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-width: 68px;
+        padding: 9px 8px;
+        border: 0;
+        border-radius: var(--r-sm);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        color: var(--money);
+        background: transparent;
+        box-shadow: inset 0 0 0 1px rgba(125, 251, 155, 0.35);
+        cursor: pointer;
+      }
+
+      .perk-buy svg {
+        width: 11px;
+        height: 11px;
+        fill: currentColor;
+        opacity: 0.85;
+      }
+
+      .perk-buy:active {
+        transform: translateY(1px);
+      }
+
+      /* 못 살 때는 흐려질 뿐이다. 까닭을 적지 않는다. */
+      .perk-buy[disabled] {
+        color: var(--text-dim);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        opacity: 0.5;
+        cursor: default;
+        transform: none;
+      }
+
+      .perk-buy.maxed {
+        color: var(--text-dim);
+        box-shadow: none;
+        opacity: 0.45;
+      }
+
+      .perk-buy .max {
+        font-size: 11px;
+        letter-spacing: var(--track-wide);
+      }
+
+      /* 산 순간 카드가 한 번 번쩍인다. 보드의 합성 번쩍임과 같은 결이다. */
+      .perk.bought::after {
+        content: '';
+        position: absolute;
+        inset: -3px;
+        border-radius: 11px;
+        pointer-events: none;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 68%);
+        animation: cell-flash 0.4s ease-out forwards;
+      }
+
+      /* =====================================================================
          머지 보드
          ===================================================================== */
 
@@ -508,6 +761,11 @@
         pointer-events: none;
         background: radial-gradient(circle, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 68%);
         animation: cell-flash 0.36s ease-out forwards;
+      }
+
+      /* 정예 보급이 터진 순간만 금빛으로 번쩍인다 */
+      .cell.flash.gold::after {
+        background: radial-gradient(circle, rgba(255, 232, 150, 0.95), rgba(255, 200, 80, 0) 70%);
       }
 
       @keyframes cell-flash {
@@ -804,8 +1062,9 @@
         <div class="track"><i id="boss-hp-fill"></i></div>
       </div>
 
-      <!-- 방어선에 붙은 체력 바 -->
+      <!-- 방어선에 붙은 체력 바. 보호막이 있으면 그 왼쪽에 방패가 놓인다. -->
       <div id="line-hp">
+        <span id="shield-pips" class="hidden"></span>
         <div class="track"><i id="hp-fill"></i></div>
         <span id="hp-text">100</span>
       </div>
@@ -867,7 +1126,22 @@
           <p class="row scrap"><span>획득</span><b id="over-scrap">0</b></p>
           <p class="row"><span>누적</span><b id="over-total">0</b></p>
           <p class="row"><span>최고</span><b id="over-best">-</b></p>
-          <button id="btn-retry" class="btn-primary" type="button">다시 도전</button>
+          <button id="btn-hangar" class="btn-primary" type="button">격납고</button>
+        </div>
+      </div>
+
+      <!-- 격납고: 죽어야 열리는 아웃게임 상점. 카드는 hangar.js가 PERKS만큼 만들어 넣는다. -->
+      <div id="screen-hangar" class="screen hidden">
+        <div class="panel hangar">
+          <h1>격납고</h1>
+          <p class="bank">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2.4 21.6 12 12 21.6 2.4 12z M12 7.2 7.2 12 12 16.8 16.8 12z" />
+            </svg>
+            <b id="hangar-total">0</b>
+          </p>
+          <div id="perk-list"></div>
+          <button id="btn-launch" class="btn-primary" type="button">출격</button>
         </div>
       </div>
     </div>

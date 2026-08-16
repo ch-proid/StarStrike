@@ -103,6 +103,18 @@ export class Ship {
     this.#applyFlashMaterial();
   }
 
+  /**
+   * 보호막이 대신 맞은 순간. 붉게가 아니라 푸르게 번쩍이고 무적을 준다.
+   * 피해를 입은 것이 아니라 막아 낸 것이므로 색이 달라야 한다.
+   */
+  playShieldBreak() {
+    if (this.destroyed) return;
+
+    this.powerFlash = PLAYER.POWER_FLASH_TIME;
+    this.invuln = Math.max(this.invuln, PLAYER.INVULN_TIME);
+    this.#applyFlashMaterial();
+  }
+
   /** 격추. 기체를 화면에서 지운다. 폭발 파편은 게임 쪽에서 뿌린다. */
   destroy() {
     this.destroyed = true;

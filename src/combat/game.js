@@ -3,11 +3,24 @@ import { Vulcan } from './vulcan.js';
 import { EnemyField } from './enemies.js';
 import { Boss } from './boss.js';
 import { DefenseLine } from './defense-line.js';
-import { DebrisField, FlashPool, ScrapField } from './effects.js';
+import { DebrisField, FlashPool, ScrapField, ShieldBurst } from './effects.js';
 import { MergeBoard } from './board.js';
 import { HUD } from './ui.js';
+import { Hangar } from './hangar.js';
+import { PerkState } from './perks.js';
 import { buildWave, stageScales } from './waves.js';
-import { AIM, BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from './tuning.js';
+import {
+  AIM,
+  BOSS,
+  FIELD,
+  HIT,
+  PLAYER,
+  SHIELD,
+  STAGE,
+  STORAGE_KEYS,
+  VULCAN,
+  WAVE,
+} from './tuning.js';
 
 // 코어 루프.
 //
@@ -20,6 +33,9 @@ import { AIM, BOSS, FIELD, HIT, PLAYER, STAGE, STORAGE_KEYS, VULCAN, WAVE } from
 // 조준도 이 파일이 맡는다. 플레이어는 전장을 만지지 않는다.
 // 표적을 고르고(방어선에 가장 가까운 적이 먼저다) 기체를 그 밑으로 보내는 일까지가 여기다.
 // 손은 머지 보드에만 둔다.
+//
+// 죽으면 격납고가 열린다(hangar.js). 누적 스크랩으로 산 퍽은 판을 시작할 때 한 번 읽어
+// 화력 배수·최대 체력·보호막·시작 무기·정예 보급 확률로 나뉘어 들어간다.
 //
 // 화력의 축은 머지 보드다(board.js). 보드가 정한 총 공격력을 발칸이 그대로 받아 쏜다.
 // 스크랩은 두 갈래로 센다. 지갑(wallet)은 무기를 사고 남은 돈이고,
@@ -75,12 +91,17 @@ export class Game {
     this.cameraFX = cameraFX;
     this.project = project;
 
+    // 격납고에서 산 영구 성장. 판을 시작할 때 한 번 읽어 각 계통에 나눠 준다.
+    this.perks = new PerkState();
+    this.powerMul = this.perks.effects.powerMul;
+
     this.vulcan = new Vulcan(scene);
     this.enemies = new EnemyField(scene, halfWidth);
     this.boss = new Boss(scene);
     this.defenseLine = new DefenseLine(scene, halfWidth);
     this.debris = new DebrisField(scene);
     this.scrap = new ScrapField(scene, () => this.#collectScrap());
+    this.shieldBurst = new ShieldBurst(scene);
 
     // 합성 순간 기체 둘레에서 터지는 빛무리
     this.powerBurst = new FlashPool(scene, {
@@ -94,7 +115,14 @@ export class Game {
 
     this.hud = new HUD({
       onNextStage: () => this.#nextStage(),
-      onRetry: () => this.startRun(),
+      onHangar: () => this.#openHangar(),
+    });
+
+    // 격납고. 누적 스크랩은 이 게임이 들고 있고, 격납고는 물어보고 시킬 뿐이다.
+    this.hangar = new Hangar(this.perks, {
+      getTotal: () => this.totalScrap,
+      spend: (cost) => this.#spendTotal(cost),
+      onLaunch: () => this.#launch(),
     });
 
     // 진행 상태
@@ -109,7 +137,13 @@ export class Game {
     this.spawnTimer = 0;
     this.scrapScale = 1;
 
-    this.playerHp = PLAYER.MAX_HP;
+    this.maxHp = PLAYER.MAX_HP; // 장갑 퍽이 올려 준다. 판을 시작할 때 다시 잡힌다.
+    this.playerHp = this.maxHp;
+
+    this.shields = 0; // 남은 1회용 보호막(보호막 퍽)
+    this.maxShields = 0;
+    this.shieldGrace = 0; // 방금 깨진 보호막이 아직 막아 주는 시간(초)
+
     this.wallet = 0; // 지금 쓸 수 있는 스크랩(무기를 사면 줄어든다)
     this.runScrap = 0; // 이번 판에 번 스크랩 총량(쓴 돈을 빼지 않는다)
     this.stageScrap = 0; // 이번 스테이지에 번 스크랩(아직 정산 전)
@@ -134,8 +168,10 @@ export class Game {
       getWallet: () => this.wallet,
       spend: (cost) => this.#spendScrap(cost),
       refund: (amount) => this.#refundScrap(amount),
-      onPowerChange: (power) => this.vulcan.setPower(power),
+      // 보드가 정한 총 공격력에 공격력 퍽 배수를 곱해 발칸에 넘긴다.
+      onPowerChange: (power) => this.vulcan.setPower(power * this.powerMul),
       onMerge: () => this.#onWeaponMerged(),
+      getEliteChance: () => this.perks.effects.eliteChance,
     });
 
     this.startRun();
@@ -169,6 +205,8 @@ export class Game {
     this.vulcan.update(dt, this.ship.muzzles, combat);
 
     if (combat) {
+      if (this.shieldGrace > 0) this.shieldGrace -= dt;
+
       this.enemies.update(dt);
       this.#updateAim();
       this.#resolveBullets(dt);
@@ -206,6 +244,7 @@ export class Game {
 
     this.debris.update(dt);
     this.powerBurst.update(dt);
+    this.shieldBurst.update(dt);
 
     // 스크랩 줍기는 정산 전까지만 돌린다. 결과 화면이 뜬 뒤에 주우면
     // 화면의 숫자는 오르는데 누적에는 들어가지 않아 앞뒤가 어긋난다.
@@ -280,24 +319,66 @@ export class Game {
 
   // --- 판 진행 -------------------------------------------------------------
 
-  /** 새 판을 시작한다. 첫 실행과 [다시 도전] 버튼이 함께 쓴다. */
+  /**
+   * 새 판을 시작한다. 첫 실행과 격납고의 [출격]이 함께 쓴다.
+   *
+   * 퍽은 여기서 딱 한 번 읽는다. 판이 도는 동안에는 바뀌지 않는다.
+   * 격납고는 죽어야 열리기 때문이다.
+   */
   startRun() {
+    const perks = this.perks.effects;
+
+    this.powerMul = perks.powerMul;
+    this.maxHp = perks.maxHp;
+    this.shields = perks.shields;
+    this.maxShields = perks.shields;
+    this.shieldGrace = 0;
+
     this.stage = 1;
     this.runScrap = 0;
     this.wallet = 0;
-    this.playerHp = PLAYER.MAX_HP;
+    this.playerHp = this.maxHp;
 
     this.ship.reset();
     this.#clearField();
 
-    // 죽으면 보드도 함께 사라진다(로그라이트). 대신 레벨 1 무기 하나를 다시 준다.
-    this.board.reset();
+    // 죽으면 보드도 함께 사라진다(로그라이트). 대신 시작 무기를 하나 다시 준다.
+    this.board.reset(perks.startLevel);
 
     this.hud.hideScreens();
     this.hud.setScrap(this.wallet);
-    this.hud.setHp(this.playerHp, PLAYER.MAX_HP);
+    this.hud.setHp(this.playerHp, this.maxHp);
+    this.hud.setShields(this.shields, this.maxShields);
 
     this.#startStage();
+  }
+
+  // --- 격납고 --------------------------------------------------------------
+
+  /** 사망 결과 화면의 [격납고]. 결과를 걷고 상점을 연다. */
+  #openHangar() {
+    if (this.state !== STATE.GAME_OVER) return;
+
+    this.hud.hideScreens();
+    this.hangar.open();
+  }
+
+  /** 격납고의 [출격]. 스테이지 1부터 새 판이다. */
+  #launch() {
+    this.hangar.close();
+    this.startRun();
+  }
+
+  /**
+   * 격납고에서 쓰는 돈은 누적 스크랩에서 곧바로 빠지고 곧바로 저장된다.
+   * @returns {boolean} 살 수 있었는지
+   */
+  #spendTotal(cost) {
+    if (cost <= 0 || this.totalScrap < cost) return false;
+
+    this.totalScrap -= cost;
+    saveNumber(STORAGE_KEYS.TOTAL_SCRAP, this.totalScrap);
+    return true;
   }
 
   #startStage() {
@@ -448,8 +529,8 @@ export class Game {
     this.stage += 1;
 
     // 스테이지를 넘길 때마다 체력을 조금 돌려준다. 온전히 회복되지는 않는다.
-    this.playerHp = Math.min(this.playerHp + PLAYER.STAGE_CLEAR_HEAL, PLAYER.MAX_HP);
-    this.hud.setHp(this.playerHp, PLAYER.MAX_HP);
+    this.playerHp = Math.min(this.playerHp + PLAYER.STAGE_CLEAR_HEAL, this.maxHp);
+    this.hud.setHp(this.playerHp, this.maxHp);
 
     this.#clearField();
     this.hud.hideScreens();
@@ -476,7 +557,7 @@ export class Game {
     }
 
     this.playerHp = 0;
-    this.hud.setHp(0, PLAYER.MAX_HP);
+    this.hud.setHp(0, this.maxHp);
     this.hud.hideBanner();
     this.hud.showBossHp(false);
 
@@ -610,8 +691,17 @@ export class Game {
   #hurtPlayer(amount, grantInvuln, x = 0, y = FIELD.DEFENSE_LINE_Y) {
     if (this.ship.destroyed) return;
 
+    // 방금 깨진 보호막이 아직 막고 있다. 이 몫은 이미 값을 치렀다.
+    if (this.shieldGrace > 0) return;
+
+    // 보호막이 남아 있으면 이 피해는 통째로 사라지고, 방패 하나가 깨진다.
+    if (this.shields > 0) {
+      this.#breakShield();
+      return;
+    }
+
     this.playerHp -= amount;
-    this.hud.setHp(Math.max(this.playerHp, 0), PLAYER.MAX_HP);
+    this.hud.setHp(Math.max(this.playerHp, 0), this.maxHp);
 
     // 얼마나 왜 아팠는지 눈으로 알려 준다. 붉은 비네트가 번쩍이고 숫자가 떠오른다.
     this.hud.hurtFlash();
@@ -626,6 +716,27 @@ export class Game {
     this.ship.playHurt(grantInvuln);
     this.hitStop = Math.max(this.hitStop, PLAYER.HURT_STOP_TIME);
     this.cameraFX.shake(PLAYER.HURT_SHAKE_STRENGTH, PLAYER.HURT_SHAKE_TIME);
+  }
+
+  /**
+   * 보호막 하나가 대신 맞고 깨진다.
+   *
+   * 깨진 뒤 SHIELD.GRACE_TIME 동안은 다음 방패가 소모되지 않는다.
+   * 방어선 통과 피해는 무적을 뚫고 들어오기 때문에, 유예가 없으면 한 번의
+   * 돌파에 방패가 통째로 녹는다. 보스에게 깔리는 즉사는 막지 못한다.
+   * 그래야 보스전이 시간전이라는 약속이 남는다.
+   */
+  #breakShield() {
+    this.shields -= 1;
+    this.shieldGrace = SHIELD.GRACE_TIME;
+
+    const p = this.ship.mesh.position;
+    this.shieldBurst.spawn(p.x, p.y, p.z + 0.4);
+    this.ship.playShieldBreak();
+
+    this.hitStop = Math.max(this.hitStop, SHIELD.STOP_TIME);
+    this.cameraFX.shake(SHIELD.SHAKE_STRENGTH, SHIELD.SHAKE_TIME);
+    this.hud.breakShield(this.shields, this.maxShields);
   }
 
   /** 처치 연출: 히트스톱 → 화면 흔들림 → 파편 버스트 → 스크랩 드랍 */
@@ -714,6 +825,7 @@ export class Game {
     this.debris.reset();
     this.scrap.reset();
     this.powerBurst.reset();
+    this.shieldBurst.reset();
     this.boss.despawn();
     this.defenseLine.reset();
 

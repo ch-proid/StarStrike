@@ -25,11 +25,20 @@ function show(el, visible) {
   if (el) el.classList.toggle('hidden', !visible);
 }
 
+/**
+ * 보호막 표시에 쓰는 방패 도형. 격납고 카드의 아이콘과 같은 모양이다.
+ * SVG를 span으로 한 겹 감싼 것은 애니메이션을 되감기 위해서다.
+ * SVG 요소에는 offsetWidth가 없어 강제 재계산이 걸리지 않는다.
+ */
+const SHIELD_PIP =
+  '<span class="pip"><svg viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M12 2.2 20.2 5.4v6.4c0 4.4-3.2 8.2-8.2 10-5-1.8-8.2-5.6-8.2-10V5.4z"/></svg></span>';
+
 export class HUD {
   /**
-   * @param {{onNextStage: () => void, onRetry: () => void}} handlers
+   * @param {{onNextStage: () => void, onHangar: () => void}} handlers
    */
-  constructor({ onNextStage, onRetry }) {
+  constructor({ onNextStage, onHangar }) {
     this.el = {
       progress: $('progress'),
       scrap: $('scrap-count'),
@@ -37,6 +46,7 @@ export class HUD {
       hp: $('line-hp'),
       hpFill: $('hp-fill'),
       hpText: $('hp-text'),
+      shields: $('shield-pips'),
 
       bossHp: $('boss-hp'),
       bossHpFill: $('boss-hp-fill'),
@@ -61,10 +71,11 @@ export class HUD {
     };
 
     $('btn-next-stage')?.addEventListener('click', onNextStage);
-    $('btn-retry')?.addEventListener('click', onRetry);
+    $('btn-hangar')?.addEventListener('click', onHangar);
 
     this.bannerTime = 0;
     this.stage = 1;
+    this.shieldMax = 0;
   }
 
   // --- 상단 한 줄 ----------------------------------------------------------
@@ -94,6 +105,40 @@ export class HUD {
     setText(this.el.hpText, Math.max(Math.ceil(hp), 0));
     // 4분의 1 아래로 떨어지면 붉게 바꿔 위험을 알린다.
     this.el.hp?.classList.toggle('low', hp / maxHp <= 0.25);
+  }
+
+  // --- 보호막 -------------------------------------------------------------
+
+  /**
+   * 판을 시작할 때 가진 만큼 방패를 깔아 둔다. 퍽이 없으면 자리째 사라진다.
+   * 깨진 자리는 지우지 않고 흐리게 남긴다. 칸이 움직이면 무엇이 줄었는지 읽히지 않는다.
+   */
+  setShields(count, max) {
+    const el = this.el.shields;
+    if (!el) return;
+
+    if (max !== this.shieldMax) {
+      this.shieldMax = max;
+      el.innerHTML = max > 0 ? SHIELD_PIP.repeat(max) : '';
+    }
+    show(el, max > 0);
+
+    const pips = el.children;
+    for (let i = 0; i < pips.length; i++) {
+      pips[i].classList.toggle('spent', i >= count);
+      pips[i].classList.remove('breaking');
+    }
+  }
+
+  /** 방금 깨진 방패 하나가 터지듯 꺼진다. @param {number} remaining 남은 수 */
+  breakShield(remaining, max) {
+    this.setShields(remaining, max);
+
+    const pip = this.el.shields?.children[remaining];
+    if (!pip) return;
+
+    void pip.offsetWidth; // 지우지 말 것. 이 한 줄이 애니메이션을 되감는다.
+    pip.classList.add('breaking');
   }
 
   showBossHp(visible) {
