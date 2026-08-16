@@ -10,7 +10,9 @@ import { Hangar } from './hangar.js';
 import { PerkState } from './perks.js';
 import { TechState } from './tech.js';
 import { buildWave, stageScales } from './waves.js';
+import { AD_RESULT, ads } from './ads.js';
 import {
+  ADS,
   AIM,
   BOSS,
   FIELD,
@@ -42,6 +44,9 @@ import {
 // 레벨 체계는 그대로 두고 탄의 성질만 바뀌므로, 보드와 화력 공식은 테크를 모른다.
 // 스크랩은 두 갈래로 센다. 지갑(wallet)은 무기를 사고 남은 돈이고,
 // 이번 판에 번 총량(runScrap)은 결과 화면과 누적 저장에 쓴다. 쓴 돈을 다시 빼지 않는다.
+//
+// 보상형 광고는 ads.js의 창구 하나만 지난다(배치 셋: 부활·3배·+3).
+// 광고가 떠 있는 동안에는 this.paused가 켜져 게임 시간이 통째로 멈춘다.
 //
 // 진행 규칙 수치는 tuning.js, 웨이브 구성 계산은 waves.js, 화면 표시는 ui.js가 맡는다.
 // 이 파일은 그 셋을 이어 붙이는 상태 기계다.
@@ -142,6 +147,8 @@ export class Game {
     this.hud = new HUD({
       onNextStage: () => this.#nextStage(),
       onHangar: () => this.#openHangar(),
+      onRevive: () => this.#revive(),
+      onBoostScrap: () => this.#boostScrap(),
     });
 
     // 격납고. 누적 스크랩은 이 게임이 들고 있고, 격납고는 물어보고 시킬 뿐이다.
@@ -159,6 +166,13 @@ export class Game {
     // 관리자 패널이 만지는 두 손잡이. 평상시에는 이 값 그대로라 일반 플레이에 닿지 않는다.
     this.timeScale = 1; // 게임 시간 배수(페이싱 검증용)
     this.godMode = false; // 켜지면 피해와 즉사를 모두 흘려보낸다.
+
+    // 광고가 떠 있는 동안 켜진다. 게임 시간이 통째로 멎는다(배속과 무관하다).
+    this.paused = false;
+
+    this.reviveLeft = ADS.REVIVE_PER_RUN; // 이번 판에 남은 광고 부활 횟수
+    this.boostUsed = false; // 이번 결과 화면에서 광고 3배를 이미 썼는가
+    this.resultEarned = 0; // 지금 결과 화면이 보여 주는 획득. 3배가 이 값을 부풀린다.
 
     this.stage = 1;
     this.wave = 1;
@@ -209,6 +223,8 @@ export class Game {
       onPowerChange: (power) => this.weapon.setPower(power * this.powerMul),
       onMerge: () => this.#onWeaponMerged(),
       getEliteChance: () => this.perks.effects.eliteChance,
+      // 막힘 해소 광고. 보드는 광고가 무엇인지 모른 채 참·거짓만 받는다.
+      onAdLevelUp: () => this.#watchAd('levelup'),
     });
 
     this.startRun();
@@ -224,6 +240,7 @@ export class Game {
    * 카메라 흔들림처럼 멈추면 안 되는 연출은 실제 dt를 그대로 쓴다.
    */
   gameTime(dt) {
+    if (this.paused) return 0; // 광고가 떠 있다. 배속보다 앞선다.
     if (this.hitStop <= 0) return dt * this.timeScale;
     this.hitStop -= dt;
     return 0;
@@ -234,6 +251,9 @@ export class Game {
    * @param {number} realDt 실제 시간. 배너 타이머처럼 멈추면 안 되는 것에 쓴다.
    */
   update(dt, realDt) {
+    // 광고 동안에는 배너도 굴러 오르던 숫자도 함께 멎는다.
+    if (this.paused) return;
+
     this.hud.update(realDt);
 
     this.stateTime += dt;
@@ -407,6 +427,8 @@ export class Game {
     this.runScrap = 0;
     this.wallet = 0;
     this.playerHp = this.maxHp;
+    this.reviveLeft = ADS.REVIVE_PER_RUN; // 부활은 판마다 다시 채워진다.
+    this.diedDuringBoss = false;
 
     this.ship.reset();
     this.#clearField();
@@ -453,6 +475,7 @@ export class Game {
   #startStage() {
     this.stageScrap = 0;
     this.wave = 0;
+    this.boostUsed = false; // 스테이지마다 3배 광고 기회가 한 번씩 돌아온다.
 
     const scales = stageScales(this.stage);
     this.enemies.setScaling(scales.hp, scales.speed);
@@ -582,10 +605,14 @@ export class Game {
     this.#bankScrap();
     this.#recordBest(this.stage, STAGE.WAVES_PER_STAGE);
 
+    // 클리어 화면의 3배는 "이번 스테이지에 번 몫"을 부풀린다.
+    this.resultEarned = earned;
+
     this.hud.showStageClear({
       stage: this.stage,
       scrap: earned,
       total: this.totalScrap,
+      canBoost: !this.boostUsed && earned > 0,
     });
 
     this.#setState(STATE.STAGE_CLEAR);
@@ -643,6 +670,9 @@ export class Game {
     this.#bankScrap();
     this.#recordBest(this.stage, this.wave);
 
+    // 사망 화면의 3배는 "이번 판에 번 총량"을 부풀린다. 화면에 적힌 그 숫자다.
+    this.resultEarned = this.runScrap;
+
     this.hud.showGameOver({
       stage: this.stage,
       wave: this.wave,
@@ -651,9 +681,81 @@ export class Game {
       total: this.totalScrap,
       bestStage: this.bestStage,
       bestWave: this.bestWave,
+      canRevive: this.reviveLeft > 0,
+      canBoost: !this.boostUsed && this.runScrap > 0,
     });
 
     this.#setState(STATE.GAME_OVER);
+  }
+
+  // --- 보상형 광고 ---------------------------------------------------------
+
+  /**
+   * 광고 하나를 끝까지 지켜본다. 그동안 게임 시간은 멎는다.
+   *
+   * 어떤 광고망인지는 ads.js만 안다. 여기서는 "봤는가"만 받는다.
+   * @param {'revive'|'triple'|'levelup'} placement
+   * @returns {Promise<boolean>} 끝까지 봤는지
+   */
+  async #watchAd(placement) {
+    this.paused = true;
+    try {
+      return (await ads.showRewarded(placement)) === AD_RESULT.COMPLETED;
+    } finally {
+      this.paused = false;
+    }
+  }
+
+  /**
+   * 위기 탈출. 사망 결과 화면에서 광고를 보면 그 자리에서 다시 선다.
+   *
+   * 한 판에 한 번뿐이고, 보스전에서 죽었어도 쓸 수 있다.
+   * 체력은 절반이고 화면의 적은 걷어 준다. 살아난 자리가 곧 죽던 자리라면
+   * 되살아나자마자 다시 깔리기 때문이다. 그래서 지금 국면을 처음부터 다시 깐다.
+   */
+  async #revive() {
+    if (this.state !== STATE.GAME_OVER || this.reviveLeft <= 0) return;
+    if (!(await this.#watchAd('revive'))) return;
+    if (this.state !== STATE.GAME_OVER) return; // 광고 사이에 화면이 바뀌었다.
+
+    this.reviveLeft -= 1;
+
+    this.playerHp = Math.max(Math.round(this.maxHp * ADS.REVIVE_HP_RATIO), 1);
+    this.hud.setHp(this.playerHp, this.maxHp);
+
+    this.ship.reset();
+    this.#clearField();
+    this.hud.hideScreens();
+
+    // 죽은 자리에서 이어 간다. 웨이브 번호는 그대로고, 그 국면만 다시 시작한다.
+    if (this.diedDuringBoss) {
+      this.diedDuringBoss = false;
+      this.wave = STAGE.WAVES_PER_STAGE;
+      this.#startBossWarning();
+    } else {
+      this.wave -= 1;
+      this.#startNextWave();
+    }
+  }
+
+  /**
+   * 재화 증폭. 이 화면이 보여 주는 획득이 세 배가 된다.
+   * 차액은 곧바로 누적에 더해 저장하고, 화면의 숫자는 굴러 올라간다.
+   */
+  async #boostScrap() {
+    if (this.state !== STATE.GAME_OVER && this.state !== STATE.STAGE_CLEAR) return;
+    if (this.boostUsed || this.resultEarned <= 0) return;
+
+    if (!(await this.#watchAd('triple'))) return;
+    if (this.boostUsed) return; // 두 번 눌린 경우를 막는다.
+
+    this.boostUsed = true;
+
+    const bonus = Math.round(this.resultEarned * (ADS.SCRAP_MULTIPLIER - 1));
+    this.totalScrap += bonus;
+    saveNumber(STORAGE_KEYS.TOTAL_SCRAP, this.totalScrap);
+
+    this.hud.boostScrap(this.resultEarned + bonus, this.totalScrap, ADS.COUNTUP_TIME);
   }
 
   // --- 피해 판정 ----------------------------------------------------------
@@ -998,6 +1100,15 @@ export class Game {
       /** 무기 테크를 전부 연다. 장착은 격납고에서 고른다. */
       unlockAllTech: () => this.tech.unlockAll(),
 
+      /**
+       * 가짜 광고를 기다리지 않고 곧바로 끝낸다(카운트다운 0초).
+       * 보상 흐름만 빨리 훑을 때 쓴다. @returns {boolean} 켜졌는지
+       */
+      toggleInstantAd: () => {
+        ads.instant = !ads.instant;
+        return ads.instant;
+      },
+
       /** 저장을 통째로 지운다. 검증용으로 부풀린 값을 되돌릴 때 쓴다. */
       resetSave: () => {
         for (const key of Object.values(STORAGE_KEYS)) {
@@ -1010,7 +1121,11 @@ export class Game {
       },
 
       /** 패널이 켜질 때 지금 상태를 읽어 표시에 반영한다. */
-      readState: () => ({ godMode: this.godMode, timeScale: this.timeScale }),
+      readState: () => ({
+        godMode: this.godMode,
+        timeScale: this.timeScale,
+        instantAd: ads.instant,
+      }),
     };
   }
 

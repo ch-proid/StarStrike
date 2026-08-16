@@ -28,6 +28,11 @@
         --money: #7dfb9b;
         --danger: #ff4a5e;
 
+        /* 광고로 얻는 것은 보라색 테두리와 ▶ 하나로 묶는다. 색 셋과 섞이지 않게. */
+        --ad: #b478ff;
+        --ad-soft: rgba(180, 120, 255, 0.18);
+        --ad-line: rgba(180, 120, 255, 0.42);
+
         --bg-void: #04050a; /* 폰 칼럼 바깥의 빈 여백 */
         --bg-field: #05070f; /* 전장 바탕 */
         --bg-panel: #0a0f1b; /* 보드·패널 바탕 */
@@ -481,6 +486,70 @@
 
       .btn-primary:active {
         transform: translateY(1px);
+      }
+
+      /* =====================================================================
+         광고 버튼
+         보라색 테두리형 + ▶. 채워진 시안 버튼은 여전히 화면에 하나뿐이다.
+         무엇을 주는지는 아이콘과 숫자로만 말한다.
+         ===================================================================== */
+
+      .ad-row {
+        display: flex;
+        gap: 6px;
+        margin-top: 14px;
+      }
+
+      .btn-ad {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        min-width: 0;
+        padding: 11px 8px;
+        border: 0;
+        border-radius: var(--r-sm);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: var(--ad);
+        background: transparent;
+        box-shadow: inset 0 0 0 1px var(--ad-line);
+        cursor: pointer;
+      }
+
+      .btn-ad svg {
+        width: 11px;
+        height: 11px;
+        fill: currentColor;
+      }
+
+      /* ▶ 만 조금 작게. 광고라는 표시일 뿐 강조가 아니다. */
+      .btn-ad .play {
+        width: 9px;
+        height: 9px;
+        opacity: 0.8;
+      }
+
+      .btn-ad:active {
+        transform: translateY(1px);
+      }
+
+      .btn-ad[disabled] {
+        color: var(--text-dim);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        opacity: 0.45;
+        cursor: default;
+        transform: none;
+      }
+
+      /* 3배가 들어오면 숫자가 굴러 오르고 한 번 물든다. */
+      .row.boosted b {
+        color: var(--ad);
+        text-shadow: 0 0 12px var(--ad-soft);
       }
 
       /* =====================================================================
@@ -1083,6 +1152,14 @@
         cursor: default;
       }
 
+      /* 보드가 꽉 차 살 수 없을 때만 나타나는 광고 버튼. 그 밖에는 자리째 없다. */
+      #btn-ad-level {
+        flex: 0 0 34px;
+        padding: 0;
+        margin: 0;
+        font-size: 13px;
+      }
+
       /* 분해함: 평소엔 흐린 아이콘만. 드래그 중에만 또렷해진다. */
       #board-trash {
         position: relative;
@@ -1204,7 +1281,13 @@
               <span id="buy-cost">14</span>
             </button>
 
-            <!-- 광고 버튼 자리: 보상형 광고는 아웃게임 상점과 함께 붙인다. -->
+            <!-- 막힘 해소: 보드가 꽉 차 살 수 없을 때만 board.js가 꺼내 놓는다. -->
+            <button id="btn-ad-level" class="btn-ad hidden" type="button" aria-label="광고로 무기 강화">
+              <svg class="play" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3.6 20 12 6 20.4z" />
+              </svg>
+              <span>+3</span>
+            </button>
 
             <div id="board-trash" aria-label="분해">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1229,8 +1312,22 @@
         <div class="panel">
           <h1>STAGE <span id="clear-stage">1</span> CLEAR</h1>
           <p class="tagline">방어선을 지켰다</p>
-          <p class="row scrap"><span>획득</span><b id="clear-scrap">0</b></p>
+          <p class="row scrap" id="clear-scrap-row"><span>획득</span><b id="clear-scrap">0</b></p>
           <p class="row"><span>누적</span><b id="clear-total">0</b></p>
+
+          <!-- 재화 증폭: 이 스테이지에서 번 몫을 세 배로. 화면당 한 번. -->
+          <div class="ad-row">
+            <button id="btn-ad-clear-scrap" class="btn-ad" type="button" aria-label="광고로 스크랩 3배">
+              <svg class="play" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3.6 20 12 6 20.4z" />
+              </svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2.4 21.6 12 12 21.6 2.4 12z M12 7.2 7.2 12 12 16.8 16.8 12z" />
+              </svg>
+              <span>×3</span>
+            </button>
+          </div>
+
           <button id="btn-next-stage" class="btn-primary" type="button">다음 스테이지</button>
         </div>
       </div>
@@ -1241,9 +1338,29 @@
           <h1>격추</h1>
           <p class="tagline">스크랩을 챙겨 다시</p>
           <p class="row"><span>도달</span><b id="over-reach">1-1</b></p>
-          <p class="row scrap"><span>획득</span><b id="over-scrap">0</b></p>
+          <p class="row scrap" id="over-scrap-row"><span>획득</span><b id="over-scrap">0</b></p>
           <p class="row"><span>누적</span><b id="over-total">0</b></p>
           <p class="row"><span>최고</span><b id="over-best">-</b></p>
+
+          <!-- 위기 탈출과 재화 증폭. 쓸 수 없는 것은 자리째 사라진다. -->
+          <div class="ad-row">
+            <button id="btn-ad-revive" class="btn-ad" type="button" aria-label="광고로 부활">
+              <svg class="play" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3.6 20 12 6 20.4z" />
+              </svg>
+              <span>부활</span>
+            </button>
+            <button id="btn-ad-over-scrap" class="btn-ad" type="button" aria-label="광고로 스크랩 3배">
+              <svg class="play" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3.6 20 12 6 20.4z" />
+              </svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2.4 21.6 12 12 21.6 2.4 12z M12 7.2 7.2 12 12 16.8 16.8 12z" />
+              </svg>
+              <span>×3</span>
+            </button>
+          </div>
+
           <button id="btn-hangar" class="btn-primary" type="button">격납고</button>
         </div>
       </div>

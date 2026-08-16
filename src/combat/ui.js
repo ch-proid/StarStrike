@@ -36,9 +36,13 @@ const SHIELD_PIP =
 
 export class HUD {
   /**
-   * @param {{onNextStage: () => void, onHangar: () => void}} handlers
+   * @param {object} handlers
+   * @param {() => void} handlers.onNextStage [다음 스테이지]
+   * @param {() => void} handlers.onHangar [격납고]
+   * @param {() => void} handlers.onRevive [▶ 부활]
+   * @param {() => void} handlers.onBoostScrap [▶ ×3]. 어느 화면인지는 game.js가 안다.
    */
-  constructor({ onNextStage, onHangar }) {
+  constructor({ onNextStage, onHangar, onRevive, onBoostScrap }) {
     this.el = {
       progress: $('progress'),
       scrap: $('scrap-count'),
@@ -61,21 +65,37 @@ export class HUD {
       stageClear: $('screen-stage-clear'),
       clearStage: $('clear-stage'),
       clearScrap: $('clear-scrap'),
+      clearScrapRow: $('clear-scrap-row'),
       clearTotal: $('clear-total'),
+      clearAdRow: $('btn-ad-clear-scrap')?.parentElement ?? null,
+      adClearScrap: $('btn-ad-clear-scrap'),
 
       gameOver: $('screen-game-over'),
       overReach: $('over-reach'),
       overScrap: $('over-scrap'),
+      overScrapRow: $('over-scrap-row'),
       overTotal: $('over-total'),
       overBest: $('over-best'),
+      overAdRow: $('btn-ad-revive')?.parentElement ?? null,
+      adRevive: $('btn-ad-revive'),
+      adOverScrap: $('btn-ad-over-scrap'),
     };
 
     $('btn-next-stage')?.addEventListener('click', onNextStage);
     $('btn-hangar')?.addEventListener('click', onHangar);
+    this.el.adRevive?.addEventListener('click', onRevive);
+    this.el.adClearScrap?.addEventListener('click', onBoostScrap);
+    this.el.adOverScrap?.addEventListener('click', onBoostScrap);
 
     this.bannerTime = 0;
     this.stage = 1;
     this.shieldMax = 0;
+
+    /** 지금 떠 있는 결과 화면. 증폭이 어느 줄을 고쳐야 하는지 여기서 안다. */
+    this.screen = null;
+
+    /** @type {{el: HTMLElement, from: number, to: number, time: number}[]} 굴러 오르는 숫자들 */
+    this.counters = [];
   }
 
   // --- 상단 한 줄 ----------------------------------------------------------
@@ -208,34 +228,114 @@ export class HUD {
 
   // --- 결과 화면 -----------------------------------------------------------
 
-  showStageClear({ stage, scrap, total }) {
+  /** @param {boolean} canBoost 광고 3배 버튼을 보일지 */
+  showStageClear({ stage, scrap, total, canBoost }) {
+    this.#resetCounters();
     setText(this.el.clearStage, stage);
     setText(this.el.clearScrap, scrap);
     setText(this.el.clearTotal, total);
+
+    this.el.clearScrapRow?.classList.remove('boosted');
+    show(this.el.clearAdRow, canBoost);
+
+    this.screen = 'clear';
     show(this.el.stageClear, true);
   }
 
-  showGameOver({ stage, wave, isBoss, scrap, total, bestStage, bestWave }) {
+  /**
+   * @param {boolean} canRevive 광고 부활 버튼을 보일지(런당 한 번)
+   * @param {boolean} canBoost 광고 3배 버튼을 보일지
+   */
+  showGameOver({ stage, wave, isBoss, scrap, total, bestStage, bestWave, canRevive, canBoost }) {
     const reach = isBoss ? `${stage}-B` : `${stage}-${wave}`;
     const best = bestStage > 0 ? `${bestStage}-${bestWave}` : '-';
 
+    this.#resetCounters();
     setText(this.el.overReach, reach);
     setText(this.el.overScrap, scrap);
     setText(this.el.overTotal, total);
     setText(this.el.overBest, best);
+
+    this.el.overScrapRow?.classList.remove('boosted');
+    show(this.el.adRevive, canRevive);
+    show(this.el.adOverScrap, canBoost);
+    show(this.el.overAdRow, canRevive || canBoost);
+
+    this.screen = 'over';
     show(this.el.gameOver, true);
   }
 
+  /**
+   * 광고 3배가 들어왔다. 획득과 누적이 굴러 올라가고, 그 버튼은 자리를 뜬다.
+   * 값 자체는 이미 game.js가 더하고 저장했다. 여기서는 보여 주기만 한다.
+   *
+   * @param {number} scrap 3배가 된 획득
+   * @param {number} total 차액이 더해진 누적
+   * @param {number} time 굴러 오르는 시간(초)
+   */
+  boostScrap(scrap, total, time) {
+    const clear = this.screen === 'clear';
+    const scrapEl = clear ? this.el.clearScrap : this.el.overScrap;
+    const totalEl = clear ? this.el.clearTotal : this.el.overTotal;
+    const row = clear ? this.el.clearScrapRow : this.el.overScrapRow;
+
+    this.#countUp(scrapEl, scrap, time);
+    this.#countUp(totalEl, total, time);
+    row?.classList.add('boosted');
+
+    // 한 화면에 한 번뿐이다. 다 쓴 버튼은 남겨 두지 않는다.
+    if (clear) {
+      show(this.el.clearAdRow, false);
+    } else {
+      show(this.el.adOverScrap, false);
+      show(this.el.overAdRow, !this.el.adRevive?.classList.contains('hidden'));
+    }
+  }
+
   hideScreens() {
+    this.#resetCounters();
+    this.screen = null;
     show(this.el.stageClear, false);
     show(this.el.gameOver, false);
   }
 
-  /** 배너 타이머만 돌린다. 히트스톱과 무관해야 하므로 실제 dt를 받는다. */
-  update(dt) {
-    if (this.bannerTime <= 0) return;
+  // --- 굴러 오르는 숫자 -----------------------------------------------------
 
-    this.bannerTime -= dt;
-    if (this.bannerTime <= 0) this.hideBanner();
+  /** 지금 적힌 값에서 목표까지 숫자를 굴린다. */
+  #countUp(el, to, time) {
+    if (!el) return;
+
+    const from = Number(el.textContent) || 0;
+    if (to === from || time <= 0) {
+      setText(el, to);
+      return;
+    }
+
+    this.counters.push({ el, from, to, time: 0, span: time });
+  }
+
+  /** 화면이 바뀌면 굴리던 숫자는 그 자리에서 걷는다. */
+  #resetCounters() {
+    this.counters.length = 0;
+  }
+
+  /** 배너 타이머와 굴러 오르는 숫자를 돌린다. 히트스톱과 무관해야 하므로 실제 dt를 받는다. */
+  update(dt) {
+    if (this.bannerTime > 0) {
+      this.bannerTime -= dt;
+      if (this.bannerTime <= 0) this.hideBanner();
+    }
+
+    for (let i = this.counters.length - 1; i >= 0; i--) {
+      const c = this.counters[i];
+      c.time += dt;
+
+      const t = Math.min(c.time / c.span, 1);
+      // 처음에 빠르고 끝에서 잦아든다. 숫자가 착 붙는 느낌을 준다.
+      const eased = 1 - (1 - t) * (1 - t);
+      setText(c.el, Math.round(c.from + (c.to - c.from) * eased));
+
+      if (t >= 1) this.counters.splice(i, 1);
+    }
   }
 }

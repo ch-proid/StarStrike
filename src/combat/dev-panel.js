@@ -148,6 +148,13 @@ export function mountDevPanel(api) {
     btn.classList.toggle('on', scale !== 1);
   }).classList.toggle('on', SPEEDS[speedIndex] !== 1);
 
+  // 가짜 광고의 3초를 건너뛴다. 보상 흐름만 빨리 훑을 때.
+  add('광고 즉시 완료', state.instantAd ? 'ON' : 'OFF', (btn, tail) => {
+    const on = api.toggleInstantAd();
+    btn.classList.toggle('on', on);
+    tail.textContent = on ? 'ON' : 'OFF';
+  }).classList.toggle('on', state.instantAd);
+
   add('즉시 사망', '✕', () => api.killPlayer());
   add('무기 전부 해금', '★', () => api.unlockAllTech());
   add('저장 초기화', '↺', () => {

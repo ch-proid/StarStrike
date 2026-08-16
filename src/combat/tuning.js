@@ -492,6 +492,33 @@ export const SHIELD = {
   STOP_TIME: 0.05,
 };
 
+/**
+ * 보상형 광고.
+ *
+ * 광고 호출은 ads.js의 AdProvider 하나를 지난다. 여기 있는 것은 "얼마나 주는가"뿐이고,
+ * "어떻게 보여 주는가"는 그쪽이 맡는다.
+ *
+ * 배치는 셋이다.
+ *   부활   사망 결과 화면. 런당 한 번. 체력 절반으로 그 자리에서 다시 선다.
+ *   3배   사망·클리어 결과 화면. 그 화면이 보여 주는 획득을 세 배로.
+ *   +3    보드가 꽉 차 살 수 없을 때만. 무작위 무기 셋이 한 레벨씩 오른다.
+ */
+export const ADS = {
+  COUNTDOWN: 3, // 가짜 광고가 세는 시간(초). 실제 SDK가 붙으면 광고 길이가 대신한다.
+
+  REVIVE_HP_RATIO: 0.5, // 부활 직후 체력 = 최대 체력 × 이 값
+  REVIVE_PER_RUN: 1, // 한 판에 부활할 수 있는 횟수
+
+  SCRAP_MULTIPLIER: 3, // 획득 스크랩 배수
+  COUNTUP_TIME: 0.7, // 숫자가 굴러 올라가는 시간(초)
+
+  LEVELUP_COUNT: 3, // 한 번에 레벨이 오르는 무기 수
+  LEVELUP_COOLDOWN: 60, // 다시 누를 수 있을 때까지의 시간(초). 실제 시간으로 센다.
+
+  // 후순위: 광고 제거 IAP. 웹 결제 연동 부담이 커서 포털 입점 뒤로 미뤘다.
+  // 붙일 자리는 여기다. 예) REMOVE_ADS_PRICE, 그리고 ads.js가 그 값을 읽어 곧바로 completed를 돌려준다.
+};
+
 /** 저장 키(localStorage). 아웃게임 상점이 이 값을 읽어 간다. */
 export const STORAGE_KEYS = {
   TOTAL_SCRAP: 'starstrike.totalScrap', // 누적 스크랩

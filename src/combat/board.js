@@ -1,4 +1,4 @@
-import { BOARD, WEAPON, WEAPON_TECH } from './tuning.js';
+import { ADS, BOARD, WEAPON, WEAPON_TECH } from './tuning.js';
 import { tierOf, weaponSvg } from './weapon-icons.js';
 
 // 머지 보드: 화면 아래쪽에 깔린 무기 합성 판.
@@ -42,14 +42,25 @@ export class MergeBoard {
    * @param {(level: number) => void} handlers.onMerge 합성이 일어난 순간(파워업 연출용)
    * @param {() => number} [handlers.getEliteChance] 정예 보급 퍽이 준 확률(0~1).
    *   구매한 무기가 한 단계 위로 나올 확률이다.
+   * @param {() => Promise<boolean>} [handlers.onAdLevelUp] 광고 [+3]을 눌렀을 때.
+   *   보드는 광고가 무엇인지 모른다. 물어보고, 참이면 무기를 올릴 뿐이다.
    */
-  constructor({ getWallet, spend, refund, onPowerChange, onMerge, getEliteChance = () => 0 }) {
+  constructor({
+    getWallet,
+    spend,
+    refund,
+    onPowerChange,
+    onMerge,
+    getEliteChance = () => 0,
+    onAdLevelUp = null,
+  }) {
     this.getWallet = getWallet;
     this.spend = spend;
     this.refund = refund;
     this.onPowerChange = onPowerChange;
     this.onMerge = onMerge;
     this.getEliteChance = getEliteChance;
+    this.onAdLevelUp = onAdLevelUp;
 
     this.size = BOARD.COLS * BOARD.ROWS;
     /** @type {number[]} 칸마다 무기 레벨. 0이면 빈 칸이다. */
@@ -62,6 +73,7 @@ export class MergeBoard {
     this.grid = document.getElementById('board-grid');
     this.trash = document.getElementById('board-trash');
     this.buyBtn = document.getElementById('btn-buy');
+    this.adBtn = document.getElementById('btn-ad-level');
     this.el = {
       cost: document.getElementById('buy-cost'),
       refund: document.getElementById('trash-refund'),
@@ -70,6 +82,10 @@ export class MergeBoard {
     this.cells = [];
     this.drag = null;
     this.buySignature = ''; // 버튼 상태를 헛되이 다시 그리지 않으려고 남겨 둔다.
+
+    this.adBusy = false; // 광고가 떠 있는 동안 두 번 누르지 못하게
+    this.adReadyAt = 0; // 이 시각(ms)이 지나야 다시 누를 수 있다. 실제 시간으로 센다.
+    this.adTimer = 0;
 
     // 드래그 중에만 창에 붙였다 떼는 손잡이들
     this.onPointerMove = (e) => {
@@ -157,6 +173,7 @@ export class MergeBoard {
     this.#endDrag(); // 끌던 무기가 남아 있으면 여기서 걷힌다.
     this.slots.fill(0);
     this.purchases = 0;
+    this.adReadyAt = 0; // 새 판이면 광고 쿨다운도 처음부터다.
     this.slots[0] = Math.min(Math.max(Math.round(startLevel), 1), WEAPON.MAX_LEVEL);
 
     this.#render();
@@ -257,10 +274,11 @@ export class MergeBoard {
     if (gold) cell.classList.add('gold');
   }
 
-  /** 구매 버튼을 다시 그리고, 바뀐 화력을 밖으로 알린다. */
+  /** 구매·광고 버튼을 다시 그리고, 바뀐 화력을 밖으로 알린다. */
   #refresh() {
     const s = this.stats();
     this.#refreshBuyButton(s);
+    this.#refreshAdButton(s);
     this.onPowerChange(s.power);
   }
 
@@ -281,11 +299,75 @@ export class MergeBoard {
     this.buyBtn.disabled = !canBuy;
   }
 
+  // --- 광고 [+3]: 막힘 해소 -------------------------------------------------
+
+  /**
+   * 광고 버튼은 보드가 꽉 차 살 수 없을 때만 나타난다.
+   * 그 밖에는 자리째 없다. 화면에 껍데기를 두지 않는다.
+   */
+  #refreshAdButton(stats = null) {
+    if (!this.adBtn || !this.onAdLevelUp) return;
+
+    const full = (stats ?? this.stats()).full;
+    const cooling = Date.now() < this.adReadyAt;
+
+    this.adBtn.classList.toggle('hidden', !full);
+    this.adBtn.disabled = cooling || this.adBusy;
+  }
+
+  /** [+3]을 눌렀다. 광고를 물어보고, 끝까지 봤을 때만 무기를 올린다. */
+  async #tapAd() {
+    if (this.adBusy || !this.onAdLevelUp) return;
+    if (Date.now() < this.adReadyAt) return;
+
+    this.adBusy = true;
+    this.#refreshAdButton();
+
+    const rewarded = await this.onAdLevelUp();
+
+    this.adBusy = false;
+    if (rewarded) {
+      this.adReadyAt = Date.now() + ADS.LEVELUP_COOLDOWN * 1000;
+      this.#levelUpRandom(ADS.LEVELUP_COUNT);
+
+      // 쿨다운이 풀리는 순간 버튼도 스스로 깨어난다. 보드는 매 프레임 도는 곳이 아니다.
+      clearTimeout(this.adTimer);
+      this.adTimer = setTimeout(() => this.#refreshAdButton(), ADS.LEVELUP_COOLDOWN * 1000);
+    }
+    this.#refreshAdButton();
+  }
+
+  /**
+   * 무작위 무기 몇 개를 한 레벨씩 올린다. 연출은 합성과 같은 팝이다.
+   * 이미 최대 레벨인 무기는 고르지 않는다. 올릴 것이 없으면 아무 일도 없다.
+   */
+  #levelUpRandom(count) {
+    const pool = [];
+    for (let i = 0; i < this.size; i++) {
+      if (this.slots[i] > 0 && this.slots[i] < WEAPON.MAX_LEVEL) pool.push(i);
+    }
+    if (pool.length === 0) return;
+
+    // 앞에서부터 무작위로 뽑아 낸다(피셔-예이츠의 앞부분만).
+    const picks = Math.min(count, pool.length);
+    for (let i = 0; i < picks; i++) {
+      const j = i + Math.floor(Math.random() * (pool.length - i));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+      this.slots[pool[i]] += 1;
+    }
+
+    this.#render();
+    for (let i = 0; i < picks; i++) this.#pop(pool[i], true);
+    this.#refresh();
+    this.onMerge(this.stats().mainLevel); // 기체가 파워업으로 답한다.
+  }
+
   // --- 끌어다 놓기 ---------------------------------------------------------
 
   #bindInput() {
     this.grid.addEventListener('pointerdown', (e) => this.#onDown(e));
     this.buyBtn.addEventListener('click', () => this.buy());
+    this.adBtn?.addEventListener('click', () => this.#tapAd());
   }
 
   #onDown(e) {
